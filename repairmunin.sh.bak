@@ -1,0 +1,24 @@
+#!/usr/bin/bash
+
+# Detect Munin domain and hostname dynamically so graphs work on any server
+MUNIN_DOMAIN=$(grep -m1 '^\[' /etc/munin/munin.conf 2>/dev/null | sed 's/^\[//;s/\]//;s/;.*//;s/:.*//')
+MUNIN_HOST=$(grep -m1 '^\[' /etc/munin/munin.conf 2>/dev/null | sed 's/^\[//;s/\]//;s/.*;//;s/.*://')
+
+# Fallback: derive from system hostname
+if [ -z "$MUNIN_DOMAIN" ] || [ "$MUNIN_DOMAIN" = "$MUNIN_HOST" ]; then
+    MUNIN_DOMAIN=$(hostname -d 2>/dev/null)
+    [ -z "$MUNIN_DOMAIN" ] && MUNIN_DOMAIN="localdomain"
+fi
+if [ -z "$MUNIN_HOST" ]; then
+    MUNIN_HOST=$(hostname -s 2>/dev/null || hostname)
+fi
+
+MUNIN_CACHE="/var/cache/munin/www/${MUNIN_DOMAIN}/${MUNIN_HOST}"
+MUNIN_LIB="/var/lib/munin/${MUNIN_DOMAIN}"
+
+sudo rm -rf "${MUNIN_CACHE}/"* /var/www/manage/ssh.port 2>/dev/null
+sudo rm -rf "${MUNIN_CACHE}" 2>/dev/null
+sudo rm -f "${MUNIN_LIB}/"* 2>/dev/null
+sudo rm -f /var/log/munin/*.log.* /var/log/munin/*.log 2>/dev/null
+sudo cp /bin/munin-cron.old /bin/munin-cron 2>/dev/null
+printf "sleep 310\ncp /bin/munin-cron.new /bin/munin-cron\n" > /var/www/manage/nextjob.sh

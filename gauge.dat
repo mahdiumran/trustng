@@ -1,0 +1,6 @@
+['Label', 'Value'],
+['RAM', 60],
+['CPU', 12],
+['Load', 8],
+['Disk', 35],
+['Iowait', 0]
