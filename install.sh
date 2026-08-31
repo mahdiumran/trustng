@@ -14,12 +14,15 @@ echo "[INFO] Installing dependencies..."
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     nginx php8.2-fpm php-sqlite3 php8.2-cli dos2unix \
-    curl dnsutils python3 systemd nftables openssl \
+    curl dnsutils python3 systemd openssl \
     munin munin-node \
-    2>/dev/null || true
+    || echo "[WARN] Some packages failed — check output above"
+
+# nftables — needed for DNS firewall (silent-drop port 53 for non-clients)
+apt-get install -y -qq nftables || echo "[WARN] nftables install failed — firewall rules will not be applied"
 
 # ---- 2. Dependency check (after packages installed)
-for cmd in curl dig python3 systemctl nft openssl php; do
+for cmd in curl dig python3 systemctl openssl php; do
     command -v $cmd >/dev/null 2>&1 || { echo "ERROR: '$cmd' tidak ada setelah install. Coba install manual: apt install <package>" >&2; exit 1; }
 done
 echo "[OK] Semua dependencies terinstall"
@@ -285,12 +288,18 @@ EOF
 chmod 440 /etc/sudoers.d/trustng-panel
 visudo -cf /etc/sudoers.d/trustng-panel && echo "[OK] sudoers panel installed"
 
-# ---- 18. nftables (if config exists)
-[ -f "$DEPLOY_DIR/conf/nftables.conf" ] && [ ! -f /etc/nftables.conf ] && {
-    install -m 0644 "$DEPLOY_DIR/conf/nftables.conf" /etc/nftables.conf
-    systemctl enable --now nftables
-    echo "[OK] nftables firewall aktif"
-}
+# ---- 18. nftables firewall (DNS port 53 silent-drop)
+if command -v nft >/dev/null 2>&1; then
+    [ -f "$DEPLOY_DIR/conf/nftables.conf" ] && [ ! -f /etc/nftables.conf ] && {
+        install -m 0644 "$DEPLOY_DIR/conf/nftables.conf" /etc/nftables.conf
+        systemctl enable --now nftables
+        echo "[OK] nftables firewall aktif (DNS 53 filtered by client set)"
+    }
+    [ -f /etc/nftables.conf ] && echo "[OK] nftables already configured"
+else
+    echo "[WARN] nft not found — DNS firewall (nftables) skipped"
+    echo "[INFO] Install manually: apt install nftables"
+fi
 
 # ---- 19. Auth SQLite (initial password)
 if command -v php >/dev/null && php -m | grep -q pdo_sqlite; then
