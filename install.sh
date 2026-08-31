@@ -14,7 +14,7 @@ echo "[INFO] Installing dependencies..."
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     nginx php8.2-fpm php-sqlite3 php8.2-cli dos2unix \
-    curl dnsutils python3 systemd openssl \
+    curl dnsutils python3 systemd openssl adduser passwd sqlite3 \
     munin munin-node \
     || echo "[WARN] Some packages failed — check output above"
 
@@ -81,6 +81,7 @@ while IFS= read -r -d '' source; do
         *.data|*.data.set|*.db|*.dig|*.ip|*.log|*.new|*.pending|*.bak|*.lock|*.key) continue ;;
         .htpasswd|setup.mulai|recovery.key|gauge.dat|top1.dat|hasilcari.txt|nextjob.sh) continue ;;
         ip6.loopback|reload.lock) continue ;;
+        AGENTS.md|DESIGN.md|tests_port_config.php|backup-*/*) continue ;;
     esac
     destination="$WEBROOT/$relative"
     install -d -m 0755 "$(dirname "$destination")"
@@ -247,8 +248,9 @@ ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/trustng 2>/dev/null || true
 # Validate & reload nginx
 nginx -t && systemctl reload nginx
 
-# ---- 15. Munin auth endpoint
-cat > "$WEBROOT/munin_auth.php" <<'EOF'
+# ---- 15. Munin auth endpoint (skip if already copied from repo)
+if [ ! -f "$WEBROOT/munin_auth.php" ]; then
+    cat > "$WEBROOT/munin_auth.php" <<'EOF'
 <?php
 require_once __DIR__ . '/includes/auth.php';
 error_reporting(0);
@@ -259,37 +261,60 @@ if (!empty($_SESSION['tng_user']) && tng_current_pw_version()) {
     http_response_code(401);
 }
 EOF
-chown www-data:www-data "$WEBROOT/munin_auth.php" 2>/dev/null || true
-
-# Auth guard exemption for munin_auth
-if [ -f "/var/www/manage/includes/auth_guard.php" ] && ! grep -q "munin_auth.php" "/var/www/manage/includes/auth_guard.php"; then
-    sed -i "s/\$exempt = array('login.php', 'logout.php');/\$exempt = array('login.php', 'logout.php', 'munin_auth.php');/" "/var/www/manage/includes/auth_guard.php"
+    chown www-data:www-data "$WEBROOT/munin_auth.php" 2>/dev/null || true
 fi
-
-# ---- 16. Build initial Munin graphs
-sudo -u munin /bin/munin-cron >/var/log/munin/initial-build.log 2>&1 || echo "[WARN] Build grafik awal gagal — lihat /var/log/munin/initial-build.log"
 
 # ---- 17. Sudoers for panel actions
 cat > /etc/sudoers.d/trustng-panel <<'EOF'
+# TRUST-NG panel — NOPASSWD sudo rules for www-data
+# SSH/Nginx validation & reload (port change flow)
 www-data ALL=(root) NOPASSWD: /usr/sbin/sshd -t
 www-data ALL=(root) NOPASSWD: /usr/sbin/nginx -t
 www-data ALL=(root) NOPASSWD: /usr/bin/systemctl reload ssh
 www-data ALL=(root) NOPASSWD: /usr/bin/systemctl reload nginx
 www-data ALL=(root) NOPASSWD: /usr/bin/systemctl is-active --quiet nginx
-www-data ALL=(root) NOPASSWD: /bin/cp
-www-data ALL=(root) NOPASSWD: /bin/rm -f /etc/ssh/sshd_config.d/99-trustng-port.conf
+
+# Service restart/reload (maintenance actions)
 www-data ALL=(root) NOPASSWD: /usr/sbin/service unbound restart
 www-data ALL=(root) NOPASSWD: /usr/bin/systemctl restart unbound
+www-data ALL=(root) NOPASSWD: /usr/sbin/service networking restart
+www-data ALL=(root) NOPASSWD: /usr/sbin/service sshd restart
+www-data ALL=(root) NOPASSWD: /usr/sbin/service nftables restart
+www-data ALL=(root) NOPASSWD: /usr/sbin/service snmpd start
+www-data ALL=(root) NOPASSWD: /usr/sbin/service snmpd stop
+www-data ALL=(root) NOPASSWD: /usr/sbin/sysctl -p
+www-data ALL=(root) NOPASSWD: /sbin/reboot
+
+# SNMP enable/disable
+www-data ALL=(root) NOPASSWD: /usr/bin/systemctl enable snmpd
+www-data ALL=(root) NOPASSWD: /usr/bin/systemctl disable snmpd
+
+# Blocklist updater
+www-data ALL=(root) NOPASSWD: /usr/local/sbin/update-blocklist
+www-data ALL=(root) NOPASSWD: /usr/bin/systemctl start update-blocklist
+
+# Munin repair
 www-data ALL=(root) NOPASSWD: /var/www/manage/repairmunin.sh
 www-data ALL=(root) NOPASSWD: /usr/local/sbin/repairmunin.sh
-www-data ALL=(root) NOPASSWD: /usr/local/sbin/update-blocklist
+
+# File operations
+www-data ALL=(root) NOPASSWD: /bin/cp
+www-data ALL=(root) NOPASSWD: /bin/rm -f /etc/ssh/sshd_config.d/99-trustng-port.conf
 www-data ALL=(root) NOPASSWD: /bin/rm -f /var/lib/trustng-metrics/metrics.db
+
+# Password management
+www-data ALL=(root) NOPASSWD: /usr/sbin/chpasswd
+www-data ALL=(root) NOPASSWD: /usr/bin/sed -i *
 EOF
 chmod 440 /etc/sudoers.d/trustng-panel
 visudo -cf /etc/sudoers.d/trustng-panel && echo "[OK] sudoers panel installed"
 
-# ---- 18. nftables firewall (DNS port 53 silent-drop)
+# ---- 17. nftables firewall (DNS port 53 silent-drop)
 if command -v nft >/dev/null 2>&1; then
+    # Create default client sets if missing (nftables needs them to load)
+    [ -f /etc/client_set ] || printf 'elements = { 127.0.0.0/8, 192.168.0.0/16, 172.16.0.0/12, 10.0.0.0/8 }\n' > /etc/client_set
+    [ -f /etc/client6_set ] || printf 'elements = { ::1/128 }\n' > /etc/client6_set
+
     [ -f "$DEPLOY_DIR/conf/nftables.conf" ] && [ ! -f /etc/nftables.conf ] && {
         install -m 0644 "$DEPLOY_DIR/conf/nftables.conf" /etc/nftables.conf
         systemctl enable --now nftables
@@ -322,10 +347,7 @@ CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT);"
     }
 fi
 
-# ---- 20. Initial Munin graphs
-sudo -u munin /bin/munin-cron >/var/log/munin/initial-build.log 2>&1 || true
-
-# ---- 21. Health checks
+# ---- 20. Health checks
 T=$(head -n1 /etc/unbound/db/trust.txt 2>/dev/null || true)
 [ -n "$T" ] && ANS=$(dig +short +time=3 "@127.0.0.1" "$T" A | head -n1) && [ -n "$ANS" ] && echo "[HEALTH] blokir $T -> $ANS"
 dig +short +time=3 "@127.0.0.1" example.com A | grep -q . && echo "[HEALTH] resolusi normal OK"
