@@ -1,2 +1,65 @@
-backup-*
-AGENTS.md
+# Local Claude/IDE files
+.claude/
+.vscode/
+.idea/
+.DS_Store
+
+# Credentials and first-boot markers
+.htpasswd
+recovery.key
+setup.mulai
+
+# Authentication and operational databases
+*.sqlite
+*.sqlite3
+auth.db
+blacklist.db
+blacklist.local.db
+
+# Mutable panel state (safe defaults belong in templates/)
+*.data
+*.data.set
+*.ip
+*.dig
+clients.ip
+clients6.ip
+forwarder.data
+resolver.data
+hosts.data
+hosts6.data
+owner.data
+snmpd.community
+ssh.port
+ssl.port
+ip6auto
+setip6
+setsafesearch
+settproxy
+setdnssec
+setsnmpd
+whitelist.db
+whitelist.db.default
+
+# Reload/pending flags and locks
+*.new
+*.pending
+reload.lock
+*.lock
+
+# Generated metrics, search results, logs, and temporary files
+gauge.dat
+top1.dat
+hasilcari.txt
+nextjob.sh
+ip6.loopback
+*.log
+*.tmp
+.tmp/
+
+# Graph/report output
+graphify-out/
+
+# Backup copies and editor artifacts
+*.bak
+backup-*/
+*~
