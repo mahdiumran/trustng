@@ -1,0 +1,15 @@
+[Unit]
+Description=TRUST-NG blocklist updater (Komdigi Trust Positif)
+Wants=network-online.target
+After=network-online.target unbound.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/update-blocklist
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+# safety: gagal bersih (bukan OOM sistem) jika memori membengkak
+MemoryMax=1G
+# updater butuh tulis /etc/unbound/db + baca panel dir (blacklist.local.db)
+# updater butuh tulis /etc/unbound/db + baca panel dir (blacklist.local.db)

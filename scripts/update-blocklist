@@ -1,0 +1,197 @@
+#!/bin/bash
+# TRUST-NG blocklist updater
+# Basis: run-blocklist.sh (backup-unbound) — struktur & log dipertahankan.
+# Perubahan:
+#   - Sumber: Komdigi saja (sources.txt)
+#   - Builder: create_domain_cdb.py -> CDB wire format (memory-efficient)
+#   - Validasi ringan ala zet-dns: min size, anti-shrink, HTML detection
+#   - Aktivasi: ATOMIC RENAME tanpa reload (hot-remap oleh patched unbound)
+#   - Health check: dig domain blokir = IP lamanlabuh, dig normal = lolos
+#   - Merge blacklist lokal dari panel (/var/www/manage/blacklist.local.db)
+#   - History: setiap run (OK/FAIL) dicatat ke blocklist_history.log untuk Activity Log
+# Memory note: seluruh pipeline pakai temp file di disk, bukan variabel bash raksasa.
+set -u
+
+LOG_FILE="/etc/unbound/db/blocklist_run.log"
+STATUS_LOG="/etc/unbound/db/blocklist_status.log"
+HISTORY_LOG="/etc/unbound/db/blocklist_history.log"
+DB_DIR="/etc/unbound/db"
+DB_FILE="$DB_DIR/blacklist.db"
+DB_NEW="$DB_DIR/blacklist.db.new"
+COUNT_FILE="$DB_DIR/trust.count"
+TRUST_TXT="$DB_DIR/trust.txt"
+URL_FILE="/etc/unbound/db/sources.txt"
+LOCAL_BLACKLIST="/var/www/manage/blacklist.local.db"
+BUILDER="/usr/local/libexec/create_domain_cdb.py"
+MIN_BYTES=${MIN_BYTES:-100000}
+MIN_DOMAINS=${MIN_DOMAINS:-1000}
+MAX_SHRINK_PERCENT=${MAX_SHRINK_PERCENT:-20}
+HEALTHCHECK_SERVER=127.0.0.1
+HEALTHCHECK_PORT=53
+RELOAD=${RELOAD:-0}
+
+# catat ke history log (dipanggil sebelum return 1 di jalur gagal)
+log_hist_fail() {
+    printf '%s | FAIL | - | domains=%s | build=0s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${TRUST_COUNT:-0}" >> "$HISTORY_LOG"
+}
+
+# single-instance lock: cegah race (timer vs manual/web trigger berjalan bersamaan)
+mkdir -p /var/lock
+LOCK_FILE="/var/lock/update-blocklist.lock"
+exec 200>"$LOCK_FILE" 2>/dev/null
+if ! flock -n 200; then
+    echo "[WARN] update-blocklist sudah berjalan di proses lain, dibatalkan." | tee -a "$STATUS_LOG" 2>/dev/null
+    exit 0
+fi
+
+run_process() {
+    : > "$LOG_FILE"
+    : > "$STATUS_LOG"
+    mkdir -p "$DB_DIR"
+
+    FETCH_TMP=$(mktemp)
+    NORM_TMP=$(mktemp)
+    RAW_TMP=$(mktemp)
+    trap 'rm -f "$FETCH_TMP" "$NORM_TMP" "$RAW_TMP" "$DB_NEW"' EXIT
+
+    if [ ! -f "$URL_FILE" ]; then
+        echo " [ERROR] File URL tidak ditemukan: $URL_FILE" | tee -a "$STATUS_LOG"
+        log_hist_fail
+        return 1
+    fi
+
+    # ---- Fetch semua URL dari sources.txt (ke temp file, bukan variabel)
+    URL_COUNT=0
+    URL_FAIL=0
+    while IFS= read -r URL || [ -n "$URL" ]; do
+        [[ -z "$URL" || "$URL" == \#* ]] && continue
+        echo "[INFO] Fetching: $URL" | tee -a "$STATUS_LOG"
+        if curl -s --max-time 600 --retry 2 --retry-delay 3 "$URL" >> "$FETCH_TMP"; then
+            URL_COUNT=$((URL_COUNT + 1))
+        else
+            echo " [WARN] Gagal fetch: $URL" | tee -a "$STATUS_LOG"
+            URL_FAIL=$((URL_FAIL + 1))
+        fi
+    done < "$URL_FILE"
+
+    if [ ! -s "$FETCH_TMP" ]; then
+        echo " [ERROR] Tidak ada data yang berhasil difetch" | tee -a "$STATUS_LOG"
+        log_hist_fail
+        return 1
+    fi
+
+    # ---- Normalisasi: lowercase, buang komentar/kosong, dedupe
+    LC_ALL=C awk '{
+        d=tolower($0); sub(/\r$/,"",d)
+        if(d=="" || d ~ /^#/) next
+        print d }' "$FETCH_TMP" | LC_ALL=C sort -u > "$NORM_TMP"
+
+    # merge manual blacklist dari panel (jika ada)
+    if [ -f "$LOCAL_BLACKLIST" ]; then
+        grep -v '^#' "$LOCAL_BLACKLIST" 2>/dev/null | LC_ALL=C sort -u >> "$NORM_TMP"
+        LC_ALL=C sort -u "$NORM_TMP" -o "$RAW_TMP"
+    else
+        mv "$NORM_TMP" "$RAW_TMP"
+    fi
+
+    TRUST_COUNT=$(wc -l < "$RAW_TMP" | tr -d ' ')
+    RAW_BYTES=$(wc -c < "$RAW_TMP" | tr -d ' ')
+
+    # ---- Validasi
+    if [ "$TRUST_COUNT" -lt "$MIN_DOMAINS" ]; then
+        echo " [ERROR] Download rejected: $TRUST_COUNT domains, minimum $MIN_DOMAINS" | tee -a "$STATUS_LOG"
+        log_hist_fail
+        return 1
+    fi
+    if [ "$RAW_BYTES" -lt "$MIN_BYTES" ]; then
+        echo " [ERROR] Download rejected: $RAW_BYTES bytes, minimum $MIN_BYTES" | tee -a "$STATUS_LOG"
+        log_hist_fail
+        return 1
+    fi
+    if head -c 4096 "$FETCH_TMP" | grep -Eiq '<html|<!doctype|access denied'; then
+        echo " [ERROR] Download rejected: response looks like HTML" | tee -a "$STATUS_LOG"
+        log_hist_fail
+        return 1
+    fi
+
+    # Anti-shrink vs list aktif
+    previous_count=0
+    [ -s "$COUNT_FILE" ] && previous_count=$(head -n1 "$COUNT_FILE" 2>/dev/null || echo 0)
+    case "$previous_count" in ''|*[!0-9]*) previous_count=0 ;; esac
+    if [ "$previous_count" -ge 100000 ]; then
+        minimum_relative=$((previous_count * (100 - MAX_SHRINK_PERCENT) / 100))
+        if [ "$TRUST_COUNT" -lt "$minimum_relative" ]; then
+            echo " [ERROR] List shrank from $previous_count to $TRUST_COUNT; minimum allowed $minimum_relative" | tee -a "$STATUS_LOG"
+            log_hist_fail
+            return 1
+        fi
+    fi
+
+    # ---- Build CDB baru ke file sementara (stdin redirect, bukan echo variabel)
+    echo "[INFO] Build CDB ($TRUST_COUNT domains)..." | tee -a "$STATUS_LOG"
+    BUILD_START=$(date +%s)
+    python3 "$BUILDER" "$DB_NEW" < "$RAW_TMP" >> "$LOG_FILE" 2>&1
+    EXIT_CODE=$?
+    BUILD_END=$(date +%s)
+    if [ $EXIT_CODE -ne 0 ] || [ ! -s "$DB_NEW" ]; then
+        echo " [ERROR] Gagal build CDB (exit code: $EXIT_CODE)" | tee -a "$STATUS_LOG"
+        rm -f "$DB_NEW"
+        log_hist_fail
+        return 1
+    fi
+
+    # ---- Tulis trust.txt + count (kompatibel panel dbtrust.php/hasilcari2.php)
+    cp "$RAW_TMP" "$TRUST_TXT.new"
+    echo "$TRUST_COUNT" > "$COUNT_FILE.new"
+
+    # ---- Aktivasi: atomic rename (hot-remap; cache & statistik utuh)
+    chmod 644 "$DB_NEW" "$TRUST_TXT.new" "$COUNT_FILE.new"
+    chown unbound:unbound "$DB_NEW" "$TRUST_TXT.new" "$COUNT_FILE.new"
+    mv "$TRUST_TXT.new" "$TRUST_TXT"
+    mv "$COUNT_FILE.new" "$COUNT_FILE"
+    mv "$DB_NEW" "$DB_FILE"
+    chown unbound:unbound "$DB_FILE" "$TRUST_TXT" "$COUNT_FILE"
+
+    if [ "$RELOAD" = "1" ]; then
+        echo "[INFO] RELOAD=1: systemctl reload unbound (perilaku lama)" | tee -a "$STATUS_LOG"
+        systemctl reload unbound
+    fi
+
+    # ---- Health check
+    sleep 2
+    HEALTH="OK"
+    testdomain=$(grep -m1 -E '^[a-z0-9]' "$TRUST_TXT" 2>/dev/null || head -n1 "$TRUST_TXT")
+    blocked_answer=$(dig +short +time=3 +tries=1 "@$HEALTHCHECK_SERVER" -p "$HEALTHCHECK_PORT" "$testdomain" A | head -n1)
+    lp_ip=$(grep '^local-data: "blacklist\. 60 IN A' /etc/unbound/lamanlabuh.conf 2>/dev/null | head -n1 | sed 's/.*IN A \([0-9.]*\)".*/\1/')
+    if [ -z "$blocked_answer" ] || { [ -n "$lp_ip" ] && [ "$blocked_answer" != "$lp_ip" ]; }; then
+        HEALTH="BLOCK-CHECK-FAIL($testdomain=$blocked_answer,expect=$lp_ip)"
+    fi
+    allowed=$(dig +short +time=3 +tries=1 "@$HEALTHCHECK_SERVER" -p "$HEALTHCHECK_PORT" example.com A | head -n1)
+    [ -z "$allowed" ] && HEALTH="$HEALTH ALLOW-CHECK-FAIL"
+
+    {
+        echo "========================================"
+        echo " [SUCCESS] $(date '+%Y-%m-%d %H:%M:%S')"
+        echo " URL berhasil : $URL_COUNT"
+        echo " URL gagal    : $URL_FAIL"
+        echo " Total domain : $TRUST_COUNT (prev: $previous_count)"
+        echo " DB file      : $DB_FILE ($(wc -c < "$DB_FILE") bytes)"
+        echo " Build time   : $((BUILD_END - BUILD_START))s"
+        echo " Health       : $HEALTH"
+        echo " Aktivasi     : atomic rename (no reload)"
+        echo " Count        : disimpan ke $COUNT_FILE"
+        echo "========================================"
+    } 2>&1 | tee -a "$STATUS_LOG"
+
+    # catat ke history log (sukses)
+    printf '%s | OK | %s | domains=%s | build=%ss\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$HEALTH" "$TRUST_COUNT" "$((BUILD_END - BUILD_START))" >> "$HISTORY_LOG"
+
+    [ "$HEALTH" = "OK" ]
+}
+
+echo "[INFO] Proses berjalan di background, harap tunggu..."
+echo "[INFO] Python log : $LOG_FILE"
+echo "[INFO] Status log : $STATUS_LOG"
+
+run_process &
+wait $!

@@ -1,0 +1,731 @@
+--- a/daemon/daemon.c
++++ b/daemon/daemon.c
+@@ -83,6 +83,7 @@
+ #include "services/cache/rrset.h"
+ #include "services/cache/infra.h"
+ #include "services/localzone.h"
++#include "services/filterdb.h"
+ #include "services/view.h"
+ #include "services/modstack.h"
+ #include "services/authzone.h"
+@@ -1055,6 +1056,12 @@
+ 		fatal_exit("Could not create local zones: out of memory");
+ 	if(!local_zones_apply_cfg(daemon->local_zones, daemon->cfg))
+ 		fatal_exit("Could not set up local zones");
++	if(daemon->cfg->filter_database && *daemon->cfg->filter_database) {
++		daemon->fdb = fdb_open(daemon->cfg->filter_database);
++		if(!daemon->fdb)
++			fatal_exit("Could not open filter-database %s",
++				daemon->cfg->filter_database);
++	}
+ 	if(!(daemon->env->fwds = forwards_create()) ||
+ 		!forwards_apply_cfg(daemon->env->fwds, daemon->cfg))
+ 		fatal_exit("Could not set forward zones");
+@@ -1198,6 +1205,8 @@
+ 	daemon->env->hints = NULL;
+ 	local_zones_delete(daemon->local_zones);
+ 	daemon->local_zones = NULL;
++	fdb_close(daemon->fdb);
++	daemon->fdb = NULL;
+ 	respip_set_delete(daemon->env->respip_set);
+ 	daemon->env->respip_set = NULL;
+ 	views_delete(daemon->env->views);
+--- a/daemon/daemon.h
++++ b/daemon/daemon.h
+@@ -53,6 +53,7 @@
+ struct rrset_cache;
+ struct acl_list;
+ struct local_zones;
++struct filter_db;
+ struct views;
+ struct ub_randstate;
+ struct daemon_remote;
+@@ -150,6 +151,8 @@
+ 	struct tcl_list* tcl;
+ 	/** local authority zones */
+ 	struct local_zones* local_zones;
++	/** TRUST-NG: shared mmap'ed blacklist cdb (may be NULL) */
++	struct filter_db* fdb;
+ 	/** last time of statistics printout */
+ 	struct timeval time_last_stat;
+ 	/** time when daemon started */
+--- a/daemon/remote.c
++++ b/daemon/remote.c
+@@ -811,6 +811,8 @@
+ 	struct timeval sumwait, avg;
+ 	if(!ssl_printf(ssl, "%s.num.queries"SQ"%lu\n", nm,
+ 		(unsigned long)s->svr.num_queries)) return 0;
++	if(!ssl_printf(ssl, "%s.num.blacklist"SQ"%lu\n", nm,
++		(unsigned long)s->svr.num_query_blacklisted)) return 0;
+ 	if(!ssl_printf(ssl, "%s.num.queries_ip_ratelimited"SQ"%lu\n", nm,
+ 		(unsigned long)s->svr.num_queries_ip_ratelimited)) return 0;
+ 	if(!ssl_printf(ssl, "%s.num.queries_cookie_valid"SQ"%lu\n", nm,
+--- a/daemon/stats.c
++++ b/daemon/stats.c
+@@ -461,6 +461,7 @@
+ void server_stats_add(struct ub_stats_info* total, struct ub_stats_info* a)
+ {
+ 	total->svr.num_queries += a->svr.num_queries;
++	total->svr.num_query_blacklisted += a->svr.num_query_blacklisted;
+ 	total->svr.num_queries_ip_ratelimited += a->svr.num_queries_ip_ratelimited;
+ 	total->svr.num_queries_cookie_valid += a->svr.num_queries_cookie_valid;
+ 	total->svr.num_queries_cookie_client += a->svr.num_queries_cookie_client;
+--- a/daemon/worker.c
++++ b/daemon/worker.c
+@@ -61,6 +61,7 @@
+ #include "services/authzone.h"
+ #include "services/mesh.h"
+ #include "services/localzone.h"
++#include "services/filterdb.h"
+ #include "services/rpz.h"
+ #include "util/data/msgparse.h"
+ #include "util/data/msgencode.h"
+@@ -1854,6 +1855,56 @@
+ 		regional_free_all(worker->scratchpad);
+ 		goto send_reply;
+ 	}
++	/* TRUST-NG: check the blacklist cdb filter before anything else,
++	 * but let whitelisted zones win over the CDB. A hit is answered
++	 * from the 'blacklist.' zone apex local-data (A record points at
++	 * the blockpage, HINFO/TXT carry the notice). */
++	/* TRUST-NG v2: whitelist wins over CDB — if the qname falls in a
++	 * transparent/typetransparent local-zone (whitelist.conf), skip the
++	 * filter entirely. Otherwise a CDB hit answers from the 'blacklist.'
++	 * apex data. */
++	fdb_remap_check(worker->daemon->fdb);
++	int tng_skip_filter = 0;
++	if(worker->daemon->fdb) {
++	    struct local_zone* wz = NULL;
++	    lock_rw_rdlock(&worker->daemon->local_zones->lock);
++	    wz = local_zones_lookup(worker->daemon->local_zones,
++		qinfo.qname, qinfo.qname_len,
++		dname_count_labels(qinfo.qname), qinfo.qclass, qinfo.qtype, 0);
++	    if(wz) { lock_rw_rdlock(&wz->lock); }
++	    if(wz && (wz->type == local_zone_transparent ||
++		      wz->type == local_zone_typetransparent)) {
++		tng_skip_filter = 1;
++	    }
++	    if(wz) { lock_rw_unlock(&wz->lock); }
++	    lock_rw_unlock(&worker->daemon->local_zones->lock);
++	}
++	if(!tng_skip_filter && worker->daemon->fdb &&
++	   fdb_check(worker->daemon->fdb, qinfo.qname, qinfo.qname_len) == 1) {
++		struct local_zone* blz;
++		fdb_remap_check(worker->daemon->fdb);
++		worker->stats.num_query_blacklisted++;
++		lock_rw_rdlock(&worker->daemon->local_zones->lock);
++		blz = local_zones_find(worker->daemon->local_zones,
++			(uint8_t*)"\011blacklist\000", 11, 2, LDNS_RR_CLASS_IN);
++		if(blz) {
++			struct local_data* bld = NULL;
++			local_data_answer(blz, &worker->env, &qinfo, &edns,
++				repinfo, c->buffer, worker->scratchpad,
++				dname_count_labels(qinfo.qname),
++				&bld, local_zone_redirect, -1, NULL, 0,
++				NULL, 0);
++		} else {
++			local_error_encode_pub(&qinfo, &worker->env, &edns,
++				repinfo, c->buffer, worker->scratchpad,
++				LDNS_RCODE_NXDOMAIN,
++				(LDNS_RCODE_NXDOMAIN|BIT_AA),
++				LDNS_EDE_BLOCKED, NULL);
++		}
++		lock_rw_unlock(&worker->daemon->local_zones->lock);
++		regional_free_all(worker->scratchpad);
++		goto send_reply;
++	}
+ 	if(local_zones_answer(worker->daemon->local_zones, &worker->env, &qinfo,
+ 		&edns, c->buffer, worker->scratchpad, repinfo, acladdr->taglist,
+ 		acladdr->taglen, acladdr->tag_actions,
+@@ -2175,9 +2226,18 @@
+ static void
+ worker_restart_timer(struct worker* worker)
+ {
+-	if(worker->env.cfg->stat_interval > 0) {
++	if(worker->env.cfg->stat_interval >= 0) {
+ 		struct timeval tv;
+-		if(worker->daemon->stat_time_specific) {
++		/* TRUST-NG: remap check piggybacks on this timer; when the
++		 * operator sets stat-interval to 0 (logging off), keep a
++		 * 1-second timer purely for the blacklist cdb hot-remap */
++		int interval = worker->env.cfg->stat_interval;
++		int remap_only = 0;
++		if(interval <= 0) {
++			interval = 1;
++			remap_only = 1;
++		}
++		if(worker->daemon->stat_time_specific && !remap_only) {
+ 			struct timeval dest, now;
+ 			int interval = worker->env.cfg->stat_interval;
+ 			int offset = worker->daemon->stat_time_offset;
+@@ -2204,7 +2264,7 @@
+ 			timeval_subtract(&tv, &dest, &now);
+ 		} else {
+ #ifndef S_SPLINT_S
+-			tv.tv_sec = worker->env.cfg->stat_interval;
++			tv.tv_sec = interval;
+ 			tv.tv_usec = 0;
+ #endif
+ 		}
+@@ -2214,7 +2274,14 @@
+ 
+ void worker_stat_timer_cb(void* arg)
+ {
+-	struct worker* worker = (struct worker*)arg;
++	struct worker* worker = (struct worker* )arg;
++	/* TRUST-NG: pick up a replaced blacklist cdb without reload */
++	fdb_remap_check(worker->daemon->fdb);
++	if(worker->env.cfg->stat_interval <= 0) {
++		/* timer only exists for the remap check; no stats work */
++		worker_restart_timer(worker);
++		return;
++	}
+ 	server_stats_log(&worker->stats, worker, worker->thread_num);
+ 	mesh_stats(worker->env.mesh, "mesh has");
+ 	worker_mem_report(worker, NULL);
+@@ -2482,8 +2549,9 @@
+ 	}
+ #endif /* USE_DNSTAP */
+ 	worker_mem_report(worker, NULL);
+-	/* if statistics enabled start timer */
+-	if(worker->env.cfg->stat_interval > 0) {
++	/* if statistics enabled start timer (TRUST-NG: also when 0, the
++	 * timer drives the blacklist cdb hot-remap check every second) */
++	if(worker->env.cfg->stat_interval >= 0) {
+ 		verbose(VERB_ALGO, "set statistics interval %d secs",
+ 			worker->env.cfg->stat_interval);
+ 		worker_restart_timer(worker);
+--- a/services/filterdb.c
++++ b/services/filterdb.c
+@@ -0,0 +1,214 @@
++/*
++ * services/filterdb.c - domain blacklist CDB database (TRUST-NG patch)
++ *
++ * Implements a read-only reader for the cdb (constant database) format as
++ * produced by tools like djbdns' cdb_make, blcreate, or the bundled
++ * create_domain_cdb.py. Keys are domain names in DNS wire format
++ * (e.g. \x07example\x03com\x00), values are empty.
++ *
++ * CDB layout (all little endian uint32):
++ *   0   .. 2047 : 256 hash table pointers (pos, num_slots)
++ *   data records: klen(4) dlen(4) key dlen
++ *   hash tables : slots of (hash, pos), pos==0 means empty
++ */
++
++#include "config.h"
++#include "services/filterdb.h"
++#include "util/log.h"
++#include "util/net_help.h"
++#include <stdlib.h>
++#include <string.h>
++#include <errno.h>
++#include <sys/mman.h>
++#ifdef HAVE_SYS_STAT_H
++#include <sys/stat.h>
++#endif
++#ifdef HAVE_UNISTD_H
++#include <unistd.h>
++#endif
++#include <fcntl.h>
++
++#ifndef MAP_FAILED
++#define MAP_FAILED ((void*)-1)
++#endif
++#ifndef PROT_READ
++#define PROT_READ 0x1
++#endif
++#ifndef MAP_SHARED
++#define MAP_SHARED 0x01
++#endif
++
++struct filter_db {
++	uint8_t* map;
++	size_t size;
++	ino_t ino;
++	char* path;
++};
++
++/* little endian readers */
++static uint32_t
++fdb_le32(const uint8_t* p)
++{
++	return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
++	       ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
++}
++
++struct filter_db*
++fdb_open(const char* path)
++{
++	struct filter_db* db;
++	int fd;
++	struct stat st;
++	void* map;
++
++	if(!path || !*path)
++		return NULL;
++	fd = open(path, O_RDONLY | O_CLOEXEC);
++	if(fd == -1) {
++		log_err("cannot open filter-database %s: %s", path,
++			strerror(errno));
++		return NULL;
++	}
++	if(fstat(fd, &st) == -1 || st.st_size < 2048) {
++		log_err("cannot stat filter-database %s: %s", path,
++			strerror(errno));
++		close(fd);
++		return NULL;
++	}
++	map = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_SHARED, fd, 0);
++	if(map == MAP_FAILED) {
++		log_err("cannot map filter-database %s: %s", path,
++			strerror(errno));
++		close(fd);
++		return NULL;
++	}
++	close(fd);
++	db = (struct filter_db*)calloc(1, sizeof(*db));
++	if(!db) {
++		munmap(map, (size_t)st.st_size);
++		return NULL;
++	}
++	db->map = (uint8_t*)map;
++	db->size = (size_t)st.st_size;
++	db->ino = st.st_ino;
++	db->path = strdup(path);
++	log_nametypeclass(VERB_OPS, "filter-database mapped", NULL, 0, 0);
++	return db;
++}
++
++void
++fdb_close(struct filter_db* db)
++{
++	if(!db) return;
++	if(db->map && db->size)
++		munmap((void*)db->map, db->size);
++	free(db->path);
++	free(db);
++}
++
++int
++fdb_remap_check(struct filter_db* db)
++{
++	struct stat st;
++	if(!db || !db->path)
++		return -1;
++	if(stat(db->path, &st) == -1)
++		return -1; /* updater may be mid-rename; keep old map */
++	if(st.st_ino == db->ino)
++		return 0;
++	/* new inode: remap atomically from the same struct */
++	{
++		int fd = open(db->path, O_RDONLY | O_CLOEXEC);
++		void* map;
++		if(fd == -1)
++			return -1;
++		if(fstat(fd, &st) == -1 || st.st_size < 2048) {
++			close(fd);
++			return -1;
++		}
++		map = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_SHARED,
++			fd, 0);
++		close(fd);
++		if(map == MAP_FAILED)
++			return -1;
++		munmap((void*)db->map, db->size);
++		db->map = (uint8_t*)map;
++		db->size = (size_t)st.st_size;
++		db->ino = st.st_ino;
++		verbose(VERB_OPS, "filter-database remapped: %s", db->path);
++		return 1;
++	}
++}
++
++/* DJB2 hash used by cdb */
++static uint32_t
++cdb_hash(const uint8_t* key, size_t klen)
++{
++	uint32_t h = 5381;
++	size_t i;
++	for(i = 0; i < klen; i++)
++		h = ((h << 5) + h) ^ key[i];
++	return h;
++}
++
++/* find exact wire-format key in the cdb; 1 hit, 0 miss, -1 error */
++static int
++cdb_find(const struct filter_db* db, const uint8_t* key, size_t klen)
++{
++	uint32_t h = cdb_hash(key, klen);
++	uint32_t tpos, tslots, slot, loop;
++
++	if(klen > (size_t)(db->size))
++		return 0;
++	tpos = fdb_le32(db->map + (h % 256) * 8);
++	tslots = fdb_le32(db->map + (h % 256) * 8 + 4);
++	/* bounds: hash table must lie inside the file */
++	if(tpos == 0 || tslots == 0 ||
++	   (size_t)tpos + (size_t)tslots * 8 > db->size)
++		return 0;
++	slot = (h >> 8) % tslots;
++	for(loop = 0; loop < tslots; loop++) {
++		uint32_t shash, spos;
++		uint32_t klen_r, dlen_r;
++		size_t ent = (size_t)tpos + (size_t)slot * 8;
++		shash = fdb_le32(db->map + ent);
++		spos = fdb_le32(db->map + ent + 4);
++		if(spos == 0)
++			return 0; /* empty slot ends probe */
++		if((size_t)spos + 8 > db->size)
++			return -1;
++		if(shash == h) {
++			klen_r = fdb_le32(db->map + spos);
++			dlen_r = fdb_le32(db->map + spos + 4);
++			if((size_t)spos + 8 + klen_r + dlen_r > db->size)
++				return -1;
++			if(klen_r == (uint32_t)klen &&
++			   memcmp(db->map + spos + 8, key, klen) == 0)
++				return 1;
++		}
++		slot = (slot + 1) % tslots;
++	}
++	return 0;
++}
++
++int
++fdb_check(struct filter_db* db, const uint8_t* dname, size_t dlen)
++{
++	/* parent-walk: www.sub.example.com -> sub.example.com -> example.com */
++	while(dlen >= 1) {
++		int r = cdb_find(db, dname, dlen);
++		if(r != 0)
++			return r; /* hit or hard error */
++		if(dname[0] == 0)
++			break; /* root reached */
++		/* strip leftmost label */
++		{
++			size_t labellen = dname[0];
++			if(labellen + 1 >= dlen)
++				break;
++			dname += labellen + 1;
++			dlen -= labellen + 1;
++		}
++	}
++	return 0;
++}
+--- a/services/filterdb.h
++++ b/services/filterdb.h
+@@ -0,0 +1,31 @@
++/*
++ * services/filterdb.h - domain blacklist CDB database
++ *
++ * TRUST-NG patch: mmap'ed constant database (CDB) of blacklisted domain
++ * names in DNS wire format. Checked by local_zones_answer() before a
++ * "blacklist." zone falls through to recursion. The database file can be
++ * replaced atomically (rename) by an external updater; workers detect the
++ * new inode via fdb_remap_check() and remap without a reload, keeping
++ * cache and statistics intact.
++ */
++#ifndef SERVICES_FILTERDB_H
++#define SERVICES_FILTERDB_H
++
++struct filter_db;
++
++/** open (mmap) the cdb at path; returns NULL on error. */
++struct filter_db* fdb_open(const char* path);
++
++/** close and free. */
++void fdb_close(struct filter_db* db);
++
++/** stat() the path; if inode differs from the mapped one, remap.
++ *  returns 1 if remapped, 0 if unchanged, -1 on error. */
++int fdb_remap_check(struct filter_db* db);
++
++/** look up qname (uncompressed wire format) with parent-walk so that
++ *  a CDB entry for example.com matches www.example.com too.
++ *  returns 1 if blacklisted, 0 if not, -1 on error/no db. */
++int fdb_check(struct filter_db* db, const uint8_t* dname, size_t dlen);
++
++#endif /* SERVICES_FILTERDB_H */
+--- a/services/localzone.c
++++ b/services/localzone.c
+@@ -51,6 +51,9 @@
+ #include "util/data/msgreply.h"
+ #include "util/data/msgparse.h"
+ #include "util/as112.h"
++#include "services/filterdb.h"
++#include "daemon/daemon.h"
++#include "daemon/worker.h"
+ 
+ /* maximum RRs in an RRset, to cap possible 'endless' list RRs.
+  * with 16 bytes for an A record, a 64K packet has about 4000 max */
+@@ -1744,8 +1747,11 @@
+ 			rcode, (rcode|BIT_AA), LDNS_EDE_NONE, NULL);
+ 		return 1;
+ 	} else if(lz_type == local_zone_typetransparent
+-		|| lz_type == local_zone_always_transparent) {
+-		/* no NODATA or NXDOMAINS for this zone type */
++		|| lz_type == local_zone_always_transparent
++		|| lz_type == local_zone_blacklist) {
++		/* no NODATA or NXDOMAINS for this zone type
++		 * (TRUST-NG: blacklist falls through to the CDB check in
++		 * local_zones_answer; miss recurses normally) */
+ 		return 0;
+ 	} else if(lz_type == local_zone_block_a ||
+ 		lz_type == local_zone_block_a_wdata) {
+@@ -1987,6 +1993,7 @@
+ 
+ 	if(lzt != local_zone_always_refuse
+ 		&& lzt != local_zone_always_transparent
++		&& lzt != local_zone_blacklist
+ 		&& lzt != local_zone_block_a
+ 		&& lzt != local_zone_block_aaaa
+ 		&& lzt != local_zone_always_nxdomain
+@@ -2001,6 +2008,30 @@
+ 	}
+ 	r = local_zones_zone_answer(z, env, qinfo, edns, repinfo, buf, temp, ld, lzt);
+ 	lock_rw_unlock(&z->lock);
++	if(!r && !qinfo->local_alias && z && lzt == local_zone_blacklist
++		&& env && env->worker && env->worker->daemon) {
++		/* TRUST-NG blacklist zone: zone matched but no local data
++		 * covered the qname (or type typetransparent-like fallthrough).
++		 * Consult the shared CDB filter-database with parent-walk;
++		 * a hit is answered from the zone apex local data below,
++		 * a miss falls through to recursion (return 0). */
++		struct daemon* d = env->worker->daemon;
++		int hit = 0;
++		fdb_remap_check(d->fdb);
++		hit = fdb_check(d->fdb, qinfo->qname, qinfo->qname_len);
++		if(hit == 1) {
++			env->worker->stats.num_query_blacklisted++;
++			/* answer from the blacklist zone apex data: re-lock
++			 * and serve as redirect-type answer */
++			lock_rw_rdlock(&z->lock);
++			r = local_zones_zone_answer(z, env, qinfo, edns,
++				repinfo, buf, temp, NULL,
++				local_zone_static);
++			lock_rw_unlock(&z->lock);
++			return r && !qinfo->local_alias;
++		}
++		return 0; /* not blacklisted: recurse normally */
++	}
+ 	return r && !qinfo->local_alias; /* see above */
+ }
+ 
+@@ -2030,6 +2061,7 @@
+ 		case local_zone_always_null: return "always_null";
+ 		case local_zone_noview: return "noview";
+ 		case local_zone_truncate: return "truncate";
++		case local_zone_blacklist: return "blacklist";
+ 		case local_zone_invalid: return "invalid";
+ 	}
+ 	return "badtyped"; 
+@@ -2081,6 +2113,11 @@
+ 		*t = local_zone_truncate;
+ 	else if(strcmp(type, "nodefault") == 0)
+ 		*t = local_zone_nodefault;
++	/* TRUST-NG aliases (dnstrust firmware compatibility) */
++	else if(strcmp(type, "whitelist") == 0)
++		*t = local_zone_transparent;
++	else if(strcmp(type, "blacklist") == 0)
++		*t = local_zone_blacklist;
+ 	else return 0;
+ 	return 1;
+ }
+@@ -2328,3 +2365,14 @@
+ 	zones->ztree = data->ztree;
+ 	data->ztree = oldtree;
+ }
++
++/* TRUST-NG: public wrapper for the static local_error_encode */
++void
++local_error_encode_pub(struct query_info* qinfo, struct module_env* env,
++	struct edns_data* edns, struct comm_reply* repinfo, sldns_buffer* buf,
++	struct regional* temp, int rcode, int r, int ede_code,
++	const char* ede_txt)
++{
++	local_error_encode(qinfo, env, edns, repinfo, buf, temp, rcode, r,
++		ede_code, ede_txt);
++}
+--- a/services/localzone.h
++++ b/services/localzone.h
+@@ -114,6 +114,10 @@
+ 	local_zone_noview,
+ 	/** truncate the response; client should retry via tcp */
+ 	local_zone_truncate,
++	/** TRUST-NG: queries are checked against the CDB filter-database;
++	 *  hit answers the zone apex data (blacklist redirect), miss
++	 *  falls through to recursion like transparent. */
++	local_zone_blacklist,
+ 	/** Invalid type, cannot be used to generate answer */
+ 	local_zone_invalid
+ };
+@@ -626,6 +630,14 @@
+ 	enum localzone_type lz_type, int tag, struct config_strlist** tag_datas,
+ 	size_t tag_datas_size, char** tagname, int num_tags);
+ 
++/** TRUST-NG: encode an error response (exposed for worker.c blacklist
++ *  filter path when the blacklist zone itself cannot be found). */
++void
++local_error_encode_pub(struct query_info* qinfo, struct module_env* env,
++	struct edns_data* edns, struct comm_reply* repinfo, sldns_buffer* buf,
++	struct regional* temp, int rcode, int r, int ede_code,
++	const char* ede_txt);
++
+ /**
+  * Add RR to local zone.
+  * @param z: local zone to add RR to
+--- a/util/config_file.c
++++ b/util/config_file.c
+@@ -205,6 +205,7 @@
+ 	if(!(cfg->directory = strdup(RUN_DIR))) goto error_exit;
+ 	if(!(cfg->logfile = strdup(""))) goto error_exit;
+ 	if(!(cfg->pidfile = strdup(PIDFILE))) goto error_exit;
++	if(!(cfg->filter_database = strdup(""))) goto error_exit;
+ 	if(!(cfg->target_fetch_policy = strdup("3 2 1 0 0"))) goto error_exit;
+ 	cfg->fast_server_permil = 0;
+ 	cfg->fast_server_num = 3;
+@@ -673,6 +674,7 @@
+ 	else S_YNO("so-reuseport:", so_reuseport)
+ 	else S_YNO("ip-transparent:", ip_transparent)
+ 	else S_YNO("ip-freebind:", ip_freebind)
++	else S_STR("filter-database:", filter_database)
+ 	else S_NUMBER_OR_ZERO("ip-dscp:", ip_dscp)
+ 	else S_MEMSIZE("rrset-cache-size:", rrset_cache_size)
+ 	else S_POW2("rrset-cache-slabs:", rrset_cache_slabs)
+@@ -1143,6 +1145,7 @@
+ 	else O_YNO(opt, "so-reuseport", so_reuseport)
+ 	else O_YNO(opt, "ip-transparent", ip_transparent)
+ 	else O_YNO(opt, "ip-freebind", ip_freebind)
++	else O_STR(opt, "filter-database", filter_database)
+ 	else O_DEC(opt, "ip-dscp", ip_dscp)
+ 	else O_MEM(opt, "rrset-cache-size", rrset_cache_size)
+ 	else O_DEC(opt, "rrset-cache-slabs", rrset_cache_slabs)
+@@ -1765,6 +1768,7 @@
+ 	free(cfg->directory);
+ 	free(cfg->logfile);
+ 	free(cfg->pidfile);
++	free(cfg->filter_database);
+ 	free(cfg->if_automatic_ports);
+ 	free(cfg->target_fetch_policy);
+ 	free(cfg->ssl_service_key);
+--- a/util/config_file.h
++++ b/util/config_file.h
+@@ -347,6 +347,11 @@
+ 	/** pidfile to write pid to. */
+ 	char* pidfile;
+ 
++	/** TRUST-NG: path to the blacklist cdb database (wire-format keys).
++	 *  Checked for queries that reach a local-zone of type 'blacklist'.
++	 *  Empty string or NULL disables the filter. */
++	char* filter_database;
++
+ 	/** should log messages be sent to syslogd */
+ 	int use_syslog;
+ 	/** log timestamp in ascii UTC */
+--- a/util/configlexer.lex
++++ b/util/configlexer.lex
+@@ -286,6 +286,7 @@
+ ip-dscp{COLON}		{ YDVAR(1, VAR_IP_DSCP) }
+ chroot{COLON}			{ YDVAR(1, VAR_CHROOT) }
+ username{COLON}			{ YDVAR(1, VAR_USERNAME) }
++filter-database{COLON}		{ YDVAR(1, VAR_FILTER_DATABASE) }
+ directory{COLON}		{ YDVAR(1, VAR_DIRECTORY) }
+ logfile{COLON}			{ YDVAR(1, VAR_LOGFILE) }
+ pidfile{COLON}			{ YDVAR(1, VAR_PIDFILE) }
+--- a/util/configparser.y
++++ b/util/configparser.y
+@@ -79,6 +79,7 @@
+ %token VAR_EDNS_TCP_KEEPALIVE VAR_EDNS_TCP_KEEPALIVE_TIMEOUT
+ %token VAR_SOCK_QUEUE_TIMEOUT
+ %token VAR_CHROOT VAR_USERNAME VAR_DIRECTORY VAR_LOGFILE VAR_PIDFILE
++%token VAR_FILTER_DATABASE
+ %token VAR_MSG_CACHE_SIZE VAR_MSG_CACHE_SLABS VAR_NUM_QUERIES_PER_THREAD
+ %token VAR_RRSET_CACHE_SIZE VAR_RRSET_CACHE_SLABS VAR_OUTGOING_NUM_TCP
+ %token VAR_INFRA_HOST_TTL VAR_INFRA_LAME_TTL VAR_INFRA_CACHE_SLABS
+@@ -302,6 +303,7 @@
+ 	server_nat64_prefix |
+ 	server_infra_cache_min_rtt | server_infra_cache_max_rtt | server_harden_algo_downgrade |
+ 	server_ip_transparent | server_ip_ratelimit | server_ratelimit |
++	server_filter_database |
+ 	server_ip_dscp | server_infra_keep_probing |
+ 	server_ip_ratelimit_slabs | server_ratelimit_slabs |
+ 	server_ip_ratelimit_size | server_ratelimit_size |
+@@ -1390,6 +1392,13 @@
+ 		cfg_parser->cfg->username = $2;
+ 	}
+ 	;
++server_filter_database: VAR_FILTER_DATABASE STRING_ARG
++	{
++		OUTYY(("P(server_filter_database:%s)\n", $2));
++		free(cfg_parser->cfg->filter_database);
++		cfg_parser->cfg->filter_database = $2;
++	}
++	;
+ server_directory: VAR_DIRECTORY STRING_ARG
+ 	{
+ 		OUTYY(("P(server_directory:%s)\n", $2));
+@@ -2406,7 +2415,10 @@
+ 		   && strcmp($3, "noview")!=0
+ 		   && strcmp($3, "inform")!=0 && strcmp($3, "inform_deny")!=0
+ 		   && strcmp($3, "inform_redirect") != 0
+-		   && strcmp($3, "ipset") != 0) {
++		   && strcmp($3, "ipset") != 0
++		   /* TRUST-NG aliases (dnstrust firmware compatibility) */
++		   && strcmp($3, "whitelist") != 0
++		   && strcmp($3, "blacklist") != 0) {
+ 			yyerror("local-zone type: expected static, deny, "
+ 				"refuse, redirect, transparent, "
+ 				"typetransparent, inform, inform_deny, "
+@@ -3394,7 +3406,10 @@
+ 		   && strcmp($3, "noview")!=0
+ 		   && strcmp($3, "inform")!=0 && strcmp($3, "inform_deny")!=0
+ 		   && strcmp($3, "inform_redirect") != 0
+-		   && strcmp($3, "ipset") != 0) {
++		   && strcmp($3, "ipset") != 0
++		   /* TRUST-NG aliases (dnstrust firmware compatibility) */
++		   && strcmp($3, "whitelist") != 0
++		   && strcmp($3, "blacklist") != 0) {
+ 			yyerror("local-zone type: expected static, deny, "
+ 				"refuse, redirect, transparent, "
+ 				"typetransparent, inform, inform_deny, "
+--- a/libunbound/unbound.h
++++ b/libunbound/unbound.h
+@@ -693,6 +693,9 @@
+ struct ub_server_stats {
+ 	/** number of queries from clients received. */
+ 	long long num_queries;
++	/** TRUST-NG: number of queries answered from the blacklist
++	 *  filter-database (blocked). */
++	long long num_query_blacklisted;
+ 	/** number of queries that have been dropped/ratelimited by ip. */
+ 	long long num_queries_ip_ratelimited;
+ 	/** number of queries with a valid DNS Cookie. */
+--- a/Makefile.in
++++ b/Makefile.in
+@@ -122,7 +122,7 @@
+ iterator/iter_hints.c iterator/iter_priv.c iterator/iter_resptype.c \
+ iterator/iter_scrub.c iterator/iter_utils.c services/listen_dnsport.c \
+ services/localzone.c services/mesh.c services/modstack.c services/view.c \
+-services/rpz.c util/rfc_1982.c \
++services/filterdb.c services/rpz.c util/rfc_1982.c \
+ services/outbound_list.c services/outside_network.c util/alloc.c \
+ util/config_file.c util/configlexer.c util/configparser.c \
+ util/shm_side/shm_main.c services/authzone.c \
+@@ -143,7 +143,7 @@
+ COMMON_OBJ_WITHOUT_NETCALL=dns.lo infra.lo rrset.lo dname.lo msgencode.lo \
+ as112.lo msgparse.lo msgreply.lo packed_rrset.lo iterator.lo iter_delegpt.lo \
+ iter_donotq.lo iter_fwd.lo iter_hints.lo iter_priv.lo iter_resptype.lo \
+-iter_scrub.lo iter_utils.lo localzone.lo mesh.lo modstack.lo view.lo \
++iter_scrub.lo iter_utils.lo localzone.lo filterdb.lo mesh.lo modstack.lo view.lo \
+ outbound_list.lo alloc.lo config_file.lo configlexer.lo configparser.lo \
+ fptr_wlist.lo siphash.lo edns.lo locks.lo log.lo mini_event.lo module.lo net_help.lo \
+ random.lo rbtree.lo regional.lo rtt.lo dnstree.lo lookup3.lo lruhash.lo \
+@@ -872,6 +872,8 @@
+  $(srcdir)/util/data/msgencode.h $(srcdir)/util/net_help.h $(srcdir)/util/random.h $(srcdir)/util/netevent.h \
+  $(srcdir)/dnscrypt/dnscrypt.h  $(srcdir)/dnscrypt/cert.h \
+  $(srcdir)/util/as112.h
++filterdb.lo filterdb.o: $(srcdir)/services/filterdb.c config.h $(srcdir)/services/filterdb.h \
++ $(srcdir)/util/log.h
+ mesh.lo mesh.o: $(srcdir)/services/mesh.c config.h $(srcdir)/services/mesh.h $(srcdir)/util/rbtree.h \
+  $(srcdir)/util/netevent.h $(srcdir)/dnscrypt/dnscrypt.h  \
+  $(srcdir)/dnscrypt/cert.h $(srcdir)/util/locks.h $(srcdir)/util/log.h \

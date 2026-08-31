@@ -1,0 +1,4 @@
+# Daftar URL sumber domain blocklist TRUST-NG
+# Satu URL per baris, baris diawali # akan diabaikan
+
+https://trustpositif.komdigi.go.id/assets/db/domains_isp

@@ -1,0 +1,10 @@
+[Unit]
+Description=TRUST-NG blocklist auto-update 2x daily
+
+[Timer]
+OnCalendar=*-*-* 02,14:00:00
+RandomizedDelaySec=30m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
