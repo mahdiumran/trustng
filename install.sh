@@ -46,8 +46,11 @@ install -m 0755 "$DEPLOY_DIR/scripts/update-blocklist"     /usr/local/sbin/updat
 # Hints + trust anchor
 [ -f /etc/unbound/run/hints ] || install -o unbound -g unbound -m 0644 /usr/share/dns/root.hints /etc/unbound/run/hints 2>/dev/null || true
 [ -e /etc/unbound/key/root.key ] || {
-    [ -f /var/lib/unbound/root.key ] && ln -sf /var/lib/unbound/root.key /etc/unbound/key/root.key
-    || [ -f /usr/share/dns/root.key ] && install -o unbound -g unbound -m 0644 /usr/share/dns/root.key /etc/unbound/key/root.key
+    if [ -f /var/lib/unbound/root.key ]; then
+        ln -sf /var/lib/unbound/root.key /etc/unbound/key/root.key
+    elif [ -f /usr/share/dns/root.key ]; then
+        install -o unbound -g unbound -m 0644 /usr/share/dns/root.key /etc/unbound/key/root.key
+    fi
 } 2>/dev/null || true
 
 # Fragment defaults

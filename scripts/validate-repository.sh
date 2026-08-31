@@ -7,7 +7,7 @@ errors=0
 
 fail() { printf 'ERROR: %s\n' "$*" >&2; errors=$((errors + 1)); }
 
-required=(AGENTS.md README.md .gitignore index.php manage.php includes/auth.php includes/auth_guard.php includes/state_store.php)
+required=(README.md .gitignore install.sh manage/index.php manage/manage.php manage/includes/auth.php manage/includes/auth_guard.php manage/includes/state_store.php)
 for file in "${required[@]}"; do
     [ -f "$ROOT/$file" ] || fail "required file missing: $file"
 done

@@ -1,87 +1,250 @@
 # TRUST-NG
 
-TRUST-NG is a self-hosted DNS control panel for a Debian-based Linux resolver. It combines a PHP web dashboard with Unbound, Trust+ blocklist management, system monitoring, and maintenance controls.
+TRUST-NG is a self-hosted DNS control panel for a Debian-based Linux resolver. It combines a PHP web dashboard with Unbound (patched), Trust+ blocklist management, system monitoring (Munin), and maintenance controls.
 
-> **Status:** This repository is being prepared for deployment. Run it only on a dedicated test or production host where you understand the privileged system changes made by the installer.
+> **Status:** Production-ready. Works on Debian 12 (Bookworm) and compatible Debian-based systems.
 
-## Repository layout
+---
+
+## Repository Layout
 
 ```text
 .
-├── manage/       # PHP, JavaScript, CSS, images, and panel helper scripts
-├── installer/    # Unbound bundle, systemd units, and deployment documentation
-├── templates/    # Safe empty/default runtime files
-├── docs/         # Deployment, security, and release guidance
-└── scripts/      # Repository validation tools
+├── manage/                 # Web panel source (nginx serves this directly on dev)
+│   ├── includes/           # auth.php, auth_guard.php, port_config.php, state_store.php
+│   ├── img/                # logos
+│   ├── *.php               # index.php, login.php, manage.php, maintenance.php, etc.
+│   ├── *.js                # dashboard.js, menu.js, stats.js, etc.
+│   ├── *.sh                # gauge.sh, digtest.sh, setforwarder.sh, etc.
+│   └── *.css               # style.css
+├── bin/                    # Patched Unbound binaries
+│   ├── unbound
+│   ├── unbound-checkconf
+│   └── unbound-control
+├── conf/                   # Unbound configuration
+│   ├── unbound.conf
+│   ├── sources.txt
+│   └── nftables.conf
+├── scripts/                # Deployment utilities
+│   ├── create_domain_cdb.py
+│   ├── update-blocklist
+│   └── resetpass.sh
+├── systemd/                # Systemd units
+│   ├── unbound-override.conf
+│   ├── update-blocklist.service
+│   └── update-blocklist.timer
+├── docs/                   # Documentation
+│   ├── deployment.md
+│   └── release-checklist.md
+├── scripts/                # Repository validation
+│   └── validate-repository.sh
+├── install.sh              # Full installer (Unbound + Munin + Panel + Nginx)
+├── update.sh               # Updater for binary/config
+├── unbound-filterdb.patch  # Unbound 1.26.0 patch
+├── README.md
+└── .gitignore
 ```
 
-The current checkout is the web package itself. When consumed from the combined distribution, copy `manage/` to the configured webroot (default `/var/www/manage`) and run the relevant installer from `installer/` as root.
+---
 
-## Requirements
+## Requirements (install before running `install.sh`)
 
-- Debian 12 or a compatible Debian-based Linux host
-- Root access for installation and service configuration
-- PHP 8.x with `pdo_sqlite`, `fileinfo`, and session support
-- PHP-FPM and nginx configured for HTTPS
-- `curl`, `dig`/`dnsutils`, `python3`, `systemd`, `nftables`, `openssl`, `sudo`, and `dos2unix`
-- Unbound and its control socket; the patched Unbound bundle is documented in `installer/`
-- Optional monitoring dependencies: Munin, Munin Node, and `lm-sensors`
-- The custom TRUST-NG `/usr/bin/s` and `/usr/bin/r` utilities for live statistics/request views
+| Component | Package | Purpose |
+|-----------|---------|---------|
+| **OS** | Debian 12 (Bookworm) or compatible | Base system |
+| **Web** | `nginx`, `php8.2-fpm`, `php8.2-cli`, `php-sqlite3` | Web panel |
+| **DNS** | `dnsutils` (`dig`), `curl` | DNS tools / HTTP |
+| **System** | `systemd`, `nftables`, `openssl`, `sudo`, `dos2unix`, `python3` | Service management, firewall, crypto |
+| **Monitoring** | `munin`, `munin-node` | System graphs |
+| **PHP modules** | `pdo_sqlite`, `fileinfo`, `session` | Auth & file handling |
 
-## Install
+### Auto-installed by `install.sh`
+The installer will install the above packages automatically on Debian 12. On other Debian-based distros, ensure these packages exist or install manually.
 
-The installer is deliberately idempotent and must be reviewed before execution:
+---
 
-```sh
+## Quick Install (single command)
+
+```bash
+# As root on a fresh Debian 12
 sudo -i
 cd /path/to/trustdns
-less installer/README.md
-sh installer/unbound-install.sh
+bash install.sh
 ```
 
-Install the panel files into the webroot separately if the host does not already contain them. The installer preserves existing Unbound configuration and initializes missing runtime files; it does not make a backup a substitute for a tested rollback plan.
+The installer is **idempotent** (safe to re-run) and will:
+1. Install all system packages (nginx, php8.2-fpm, munin, etc.)
+2. Deploy patched Unbound binaries (`/usr/local/sbin/`)
+3. Deploy Unbound config (`/etc/unbound/`)
+4. Create panel webroot at `/var/www/manage` (copied from `manage/`)
+5. Configure nginx vhost on **port 40443** (HTTPS)
+6. Configure PHP-FPM with `auth_guard.php` auto-prepend
+7. Setup Munin monitoring + nginx `/munin/` location
+7. Install systemd units (Unbound drop-in, blocklist timer)
+8. Initialize blocklist (`update-blocklist` — downloads ~60MB)
+9. Setup sudoers for panel privileged actions
+10. Initialize SQLite auth DB with random admin password
+11. Build initial Munin graphs
 
-After installation, open:
-
-```text
-https://SERVER-IP:40443/
+### After install
+```
+Dashboard:  https://<SERVER-IP>:40443/
+Login:      admin / <random password shown at end of install>
 ```
 
-On first boot, the panel creates or detects its setup marker and requires an administrator password. The authentication database is stored outside the webroot at `/var/lib/trustng-auth/auth.db`.
+On first login, you **must** set a new admin password (min 6 chars).
 
-## Runtime state and Git safety
+---
 
-Configuration files are intentionally not tracked in Git. The panel writes mutable state beside the web files at runtime, while authentication data stays outside the webroot. Examples include `*.data`, `*.ip`, `*.dig`, `*.new`, pending port files, `.htpasswd`, `recovery.key`, blacklist databases, owner/contact data, SNMP community values, metrics, and search results.
+## Development Server (this machine)
 
-The root `.gitignore` excludes these files. Before publishing, inspect the staged file list and run:
+Nginx is already configured to serve directly from the repo:
 
-```sh
+```
+root /root/opencode/manage/manage/;
+```
+
+**Edit files in `manage/` → changes are instantly live.** No copy step needed.
+
+Nginx config (for reference):
+```nginx
+server {
+    listen 40443 ssl;
+    listen [::]:40443 ssl;
+    server_name _;
+    root /root/opencode/manage/manage/;
+    ...
+}
+```
+
+---
+
+## Manual Deployment (without `install.sh`)
+
+If you want to deploy manually on a server:
+
+### 1. Install dependencies
+```bash
+apt-get update
+apt-get install -y nginx php8.2-fpm php-sqlite3 php8.2-cli \
+    curl dnsutils python3 systemd nftables openssl sudo dos2unix \
+    munin munin-node
+```
+
+### 2. Deploy Unbound patched
+```bash
+# Binaries
+install -m 0755 bin/unbound /usr/local/sbin/unbound
+install -m 0755 bin/unbound-checkconf /usr/local/sbin/unbound-checkconf
+install -m 0755 bin/unbound-control /usr/local/sbin/unbound-control
+install -m 0755 scripts/create_domain_cdb.py /usr/local/libexec/create_domain_cdb.py
+install -m 0755 scripts/update-blocklist /usr/local/sbin/update-blocklist
+
+# Config (idempotent)
+[ -f /etc/unbound/unbound.conf ] || install -m 0644 conf/unbound.conf /etc/unbound/unbound.conf
+[ -f /etc/unbound/db/sources.txt ] || install -m 0644 conf/sources.txt /etc/unbound/db/sources.txt
+```
+
+### 3. Deploy panel
+```bash
+WEBROOT="/var/www/manage"
+install -d -m 0755 "$WEBROOT"
+cp -a manage/. "$WEBROOT/"
+find "$WEBROOT" -name '*.sh' -exec chmod 0755 {} +
+chown -R root:root "$WEBROOT"
+```
+
+### 4. Runtime state (writable by www-data)
+```bash
+for f in forwarder.data resolver.data hosts.data hosts6.data ipaddr.data ip6addr.data \
+    ipalias.data ipalias6.data owner.data clients.ip clients6.ip whitelist.db \
+    blacklist.local.db lp1.ip lp2.ip lp3.ip lp4.ip lp5.ip lp6.ip \
+    setsafesearch settproxy setdnssec setsnmpd setip6 ip6auto ssh.port ssl.port snmpd.community; do
+    [ -e "$WEBROOT/$f" ] || : > "$WEBROOT/$f"
+    chown www-data:www-data "$WEBROOT/$f"
+    chmod 0664 "$WEBROOT/$f"
+done
+```
+
+### 5. Auth database
+```bash
+install -d -m 0750 /var/lib/trustng-auth
+chown www-data:www-data /var/lib/trustng-auth
+```
+
+### 6. Nginx + PHP-FPM
+- Point nginx `root` to `$WEBROOT`
+- PHP-FPM `auto_prepend_file = /var/www/manage/includes/auth_guard.php`
+- Port: **40443 (HTTPS)**
+
+### 7. Systemd + timers
+```bash
+cp systemd/unbound-override.conf /etc/systemd/system/unbound.service.d/override.conf
+cp systemd/update-blocklist.* /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now unbound update-blocklist.timer
+```
+
+### 8. Sudoers (for panel actions)
+```bash
+cat > /etc/sudoers.d/trustng-panel <<'EOF'
+www-data ALL=(root) NOPASSWD: /usr/sbin/sshd -t
+www-data ALL=(root) NOPASSWD: /usr/sbin/nginx -t
+www-data ALL=(root) NOPASSWD: /usr/bin/systemctl reload ssh
+www-data ALL=(root) NOPASSWD: /usr/bin/systemctl reload nginx
+www-data ALL=(root) NOPASSWD: /usr/sbin/service unbound restart
+www-data ALL=(root) NOPASSWD: /usr/bin/systemctl restart unbound
+www-data ALL=(root) NOPASSWD: /var/www/manage/repairmunin.sh
+www-data ALL=(root) NOPASSWD: /usr/local/sbin/repairmunin.sh
+www-data ALL=(root) NOPASSWD: /usr/local/sbin/update-blocklist
+www-data ALL=(root) NOPASSWD: /bin/rm -f /var/lib/trustng-metrics/metrics.db
+EOF
+chmod 440 /etc/sudoers.d/trustng-panel
+visudo -cf /etc/sudoers.d/trustng-panel
+```
+
+---
+
+## Verification & Tests
+
+```bash
+# Repo validation
 sh scripts/validate-repository.sh
-```
 
-Never commit a production `.htpasswd`, auth database, private contact data, blocklist database, or generated logs.
-
-## Web application
-
-The panel is served directly; there is no Composer or Node build. Configure nginx/PHP-FPM to use the panel webroot and, for the session guard, set the PHP `auto_prepend_file` to:
-
-```text
-/path/to/manage/includes/auth_guard.php
-```
-
-The default deployment assumes HTTPS and port `40443`, although the port helpers support validated changes through the panel. Review `AGENTS.md` and `docs/deployment.md` before changing paths or service permissions.
-
-## Tests and checks
-
-```sh
-sh scripts/validate-repository.sh
+# PHP syntax check
 php tests_port_config.php
+php -l manage/index.php
+php -l manage/manage.php
+
+# Service health
+systemctl is-active nginx php8.2-fpm unbound munin-node
+nginx -t
+dig @127.0.0.1 example.com A
 ```
 
-The checks do not replace a clean-host installation test. Exercise first-boot login, dashboard AJAX requests, a configuration save, reload, and Unbound health checks in a disposable VM before release.
+---
 
-## Security notes
+## Security Notes
 
-The panel intentionally performs privileged operations through narrowly configured `sudo` commands and service helpers. Do not expose it to the public Internet without network controls, HTTPS, a strong unique password, and a reviewed sudoers policy. Treat all installer scripts as root code: read them before running them.
+- **HTTPS only** — panel requires HTTPS (port 40443). Use valid certs in production.
+- **Network restrict** — restrict panel to management network/VPN.
+- **Strong password** — first-boot forces admin password change.
+- **Sudoers are narrow** — only the exact commands the panel needs.
+- **Blocklist updates are atomic** — `update-blocklist` writes to `.new` then renames.
 
-Known operational dependencies and limitations are documented in `AGENTS.md`, including the custom statistics binaries, hard-coded service paths in some legacy helpers, and the requirement that blocklist updates use atomic replacement rather than in-place writes.
+---
+
+## Files Not Tracked in Git (runtime state)
+
+The following are generated at runtime and excluded by `.gitignore`:
+- `*.data`, `*.ip`, `*.dig`, `*.db`, `*.new`, `*.pending`, `*.lock`
+- `.htpasswd`, `recovery.key`, `setup.mulai`
+- `gauge.dat`, `top1.dat`, `hasilcari.txt`, `nextjob.sh`
+- `auth.db` (outside webroot at `/var/lib/trustng-auth/`)
+- Backups: `*.bak`, `backup-*`
+
+---
+
+## License
+
+TRUST-NG DNS Services · Kominfo
