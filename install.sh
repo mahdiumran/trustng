@@ -9,19 +9,22 @@ test "$(id -u)" -eq 0 || { echo "install.sh harus dijalankan sebagai root" >&2; 
 echo "== TRUST-NG Full Installer =="
 echo "Deploy dir: $DEPLOY_DIR"
 
-# ---- 1. Dependency check & install
-for cmd in curl dig python3 systemctl nft openssl; do
-    command -v $cmd >/dev/null 2>&1 || { echo "ERROR: '$cmd' tidak ada. Install dulu: apt install curl dnsutils python3 systemd nftables openssl" >&2; exit 1; }
-done
-
-# Install required packages
+# ---- 1. Install required packages first (before dependency check)
+echo "[INFO] Installing dependencies..."
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     nginx php8.2-fpm php-sqlite3 php8.2-cli dos2unix \
+    curl dnsutils python3 systemd nftables openssl \
     munin munin-node \
     2>/dev/null || true
 
-# ---- 2. Bundel artifacts check
+# ---- 2. Dependency check (after packages installed)
+for cmd in curl dig python3 systemctl nft openssl php; do
+    command -v $cmd >/dev/null 2>&1 || { echo "ERROR: '$cmd' tidak ada setelah install. Coba install manual: apt install <package>" >&2; exit 1; }
+done
+echo "[OK] Semua dependencies terinstall"
+
+# ---- 3. Bundel artifacts check
 required="bin/unbound bin/unbound-checkconf bin/unbound-control scripts/create_domain_cdb.py scripts/update-blocklist conf/unbound.conf conf/sources.txt conf/nftables.conf"
 for f in $required; do
     test -s "$DEPLOY_DIR/$f" || { echo "ERROR: artifact hilang: $f" >&2; exit 1; }
