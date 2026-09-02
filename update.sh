@@ -119,13 +119,20 @@ if [ "$do_web" = 1 ]; then
     # backup current web files
     run_remote "mkdir -p $BACKUP/web && cp -a $WEBROOT/*.php $WEBROOT/includes/ $WEBROOT/manage/ $BACKUP/web/ 2>/dev/null || true"
 
-    # deploy PHP files
+    # deploy PHP files (use scp, no rsync dependency)
     if [ -n "$REMOTE" ]; then
-        rsync -az --delete --exclude='*.db' --exclude='*.data' --exclude='*.log' \
-            "$DEPLOY_DIR/manage/" "root@$REMOTE:$WEBROOT/"
+        for f in $(find "$DEPLOY_DIR/manage" -maxdepth 1 -name '*.php' -type f); do
+            scp $SSH_OPTS "$f" "root@$REMOTE:$WEBROOT/"
+        done
+        # also deploy includes/ and manage/ subdirs if they exist
+        [ -d "$DEPLOY_DIR/manage/includes" ] && scp $SSH_OPTS -r "$DEPLOY_DIR/manage/includes/"* "root@$REMOTE:$WEBROOT/includes/" 2>/dev/null || true
+        [ -d "$DEPLOY_DIR/manage/manage" ] && scp $SSH_OPTS -r "$DEPLOY_DIR/manage/manage/"* "root@$REMOTE:$WEBROOT/manage/" 2>/dev/null || true
     else
-        rsync -az --delete --exclude='*.db' --exclude='*.data' --exclude='*.log' \
-            "$DEPLOY_DIR/manage/" "$WEBROOT/"
+        for f in $(find "$DEPLOY_DIR/manage" -maxdepth 1 -name '*.php' -type f); do
+            install -m 0644 "$f" "$WEBROOT/"
+        done
+        [ -d "$DEPLOY_DIR/manage/includes" ] && cp -a "$DEPLOY_DIR/manage/includes/"* "$WEBROOT/includes/" 2>/dev/null || true
+        [ -d "$DEPLOY_DIR/manage/manage" ] && cp -a "$DEPLOY_DIR/manage/manage/"* "$WEBROOT/manage/" 2>/dev/null || true
     fi
     run_remote "chown -R root:root $WEBROOT && find $WEBROOT -type f -name '*.sh' -exec chmod 0755 {} +"
 
