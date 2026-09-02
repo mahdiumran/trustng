@@ -190,8 +190,8 @@ $statusBadge = function($val) {
 };
 
 // --- DNS Statistics ---
-// Cumulative totals from Unbound stats (dn stats_noreset)
-$unbound_stats = @shell_exec("dn stats_noreset 2>/dev/null");
+// Cumulative totals from Unbound stats
+$unbound_stats = @shell_exec("/usr/local/sbin/unbound-control stats_noreset 2>/dev/null");
 if (!$unbound_stats) {
     $unbound_stats = @shell_exec("unbound-control stats_noreset 2>/dev/null");
 }

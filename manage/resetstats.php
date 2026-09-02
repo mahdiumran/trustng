@@ -35,7 +35,7 @@ function statval($stats, $key) {
     if (preg_match('/^' . preg_quote($key, '/') . '=(\d+)/m', $stats, $m)) return $m[1];
     return '0';
 }
-$stats = @shell_exec("dn stats_noreset 2>/dev/null");
+$stats = @shell_exec("/usr/local/sbin/unbound-control stats_noreset 2>/dev/null");
 if (empty($stats)) { $stats = @shell_exec("unbound-control stats_noreset 2>/dev/null"); }
 $queries   = statval($stats, 'total.num.queries');
 $blocked   = statval($stats, 'total.num.blacklist');

@@ -47,6 +47,63 @@ id unbound >/dev/null 2>&1 || {
 install -d -m 0755 /etc/unbound /etc/unbound/db /etc/unbound/run /etc/unbound/key /usr/local/sbin /usr/local/bin /usr/local/libexec
 install -d -o unbound -g unbound -m 0755 /etc/unbound/run /etc/unbound/db
 
+# Create /usr/local/etc/unbound/ dir and symlink for unbound-control (expects config here)
+mkdir -p /usr/local/etc/unbound
+ln -sf /etc/unbound/unbound.conf /usr/local/etc/unbound/unbound.conf
+
+# ---- 3b. Interface rename: ens18 → eth0 (Debian predictable naming → classic)
+# Web panel expects eth0; udev rule ensures rename persists across reboots
+setup_interface_rename() {
+    local RULE_FILE="/etc/udev/rules.d/70-persistent-net.rules"
+    local IFACES_FILE="/etc/network/interfaces"
+    local IFACE
+    IFACE=$(ip -o link show | awk -F': ' '!/lo/{print $2; exit}')
+
+    # Only proceed if primary interface is NOT already eth0
+    if [ "$IFACE" = "eth0" ]; then
+        echo "[OK] Interface sudah eth0, skip rename"
+        return 0
+    fi
+
+    echo "[INFO] Detected interface: $IFACE (panel expects eth0)"
+
+    # Get MAC of primary interface for stable udev rule
+    local MAC
+    MAC=$(cat /sys/class/net/"$IFACE"/address 2>/dev/null)
+    if [ -z "$MAC" ]; then
+        echo "[WARN] Tidak bisa baca MAC address untuk $IFACE, skip rename"
+        return 0
+    fi
+
+    # Install udev rule (MAC-based, survives hardware changes on same NIC)
+    cat > "$RULE_FILE" <<EOF
+# TRUST-NG: rename $IFACE -> eth0 (MAC=$MAC)
+SUBSYSTEM=="net", ACTION=="add", DRIVERS=="?*", ATTR{address}=="$MAC", NAME="eth0"
+EOF
+    chmod 0644 "$RULE_FILE"
+    echo "[OK] udev rule installed: $RULE_FILE"
+
+    # Update /etc/network/interfaces: replace old interface name with eth0
+    if [ -f "$IFACES_FILE" ]; then
+        cp -a "$IFACES_FILE" "${IFACES_FILE}.bak.$(date +%Y%m%d%H%M%S)"
+        sed -i "s/\b${IFACE}\b/eth0/g" "$IFACES_FILE"
+        echo "[OK] /etc/network/interfaces updated: $IFACE -> eth0"
+    fi
+
+    # Apply rename immediately (without reboot)
+    ip link set "$IFACE" down 2>/dev/null || true
+    ip link set "$IFACE" name eth0 2>/dev/null || true
+    ip link set eth0 up 2>/dev/null || true
+
+    # Verify
+    if ip link show eth0 >/dev/null 2>&1; then
+        echo "[OK] Interface renamed: $IFACE -> eth0"
+    else
+        echo "[WARN] Rename gagal saat runtime; akan aktif setelah reboot"
+    fi
+}
+setup_interface_rename
+
 # ---- 4. Install Unbound patched binaries and utility scripts
 install -m 0755 "$DEPLOY_DIR/bin/unbound"          /usr/local/sbin/unbound
 install -m 0755 "$DEPLOY_DIR/bin/unbound-checkconf" /usr/local/sbin/unbound-checkconf
@@ -301,6 +358,18 @@ ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/trustng 2>/dev/null || true
 
 # Validate & reload nginx
 nginx -t && systemctl reload nginx
+
+# ---- 14b. PHP-FPM PATH — ensure /usr/local/sbin is in PATH for unbound-control
+PHP_FPM_POOL="/etc/php/8.2/fpm/pool.d/www.conf"
+if [ -f "$PHP_FPM_POOL" ]; then
+    if grep -q '^;env\[PATH\]' "$PHP_FPM_POOL" 2>/dev/null; then
+        sed -i 's|^;env\[PATH\].*|env[PATH] = /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin|' "$PHP_FPM_POOL"
+        systemctl restart php8.2-fpm 2>/dev/null || true
+        echo "[OK] PHP-FPM PATH updated (added /usr/local/sbin)"
+    elif grep -q '^env\[PATH\]' "$PHP_FPM_POOL" 2>/dev/null; then
+        echo "[OK] PHP-FPM PATH already configured"
+    fi
+fi
 
 # ---- 15. Munin auth endpoint (skip if already copied from repo)
 if [ ! -f "$WEBROOT/munin_auth.php" ]; then

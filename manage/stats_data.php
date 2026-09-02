@@ -3,9 +3,8 @@ header('Content-Type: application/json');
 error_reporting(0);
 
 function st_collect() {
-    $out = @shell_exec("dn stats_noreset 2>/dev/null");
+    $out = @shell_exec("/usr/local/sbin/unbound-control stats_noreset 2>/dev/null");
     if (!$out) $out = @shell_exec("unbound-control stats_noreset 2>/dev/null");
-    if (!$out) $out = @shell_exec("/usr/bin/s 2>/dev/null");
     return $out ?: '';
 }
 

@@ -3,7 +3,7 @@
 // Returns JSON: {"Cache Hits":1635027,"Cache Miss":73993}
 header('Content-Type: application/json');
 
-$stats = @shell_exec("dn stats_noreset 2>/dev/null");
+$stats = @shell_exec("/usr/local/sbin/unbound-control stats_noreset 2>/dev/null");
 if (!$stats) {
     $stats = @shell_exec("unbound-control stats_noreset 2>/dev/null");
 }

@@ -3,7 +3,7 @@
 // Returns JSON: {"Local Cache":1635027,"Resolver1 (1.1.1.1)":73993,...}
 header('Content-Type: application/json');
 
-$stats = @shell_exec("dn stats_noreset 2>/dev/null");
+$stats = @shell_exec("/usr/local/sbin/unbound-control stats_noreset 2>/dev/null");
 if (!$stats) {
     $stats = @shell_exec("unbound-control stats_noreset 2>/dev/null");
 }

@@ -15,9 +15,8 @@ $ipaddr = shell_exec("ifconfig eth0 2>/dev/null | grep netmask | sed 's/ .*inet 
 $ipaddr = $ipaddr !== null ? trim($ipaddr) : '';
 
 function collect_stats() {
-    $out = @shell_exec("dn stats_noreset 2>/dev/null");
+    $out = @shell_exec("/usr/local/sbin/unbound-control stats_noreset 2>/dev/null");
     if (!$out) $out = @shell_exec("unbound-control stats_noreset 2>/dev/null");
-    if (!$out) $out = @shell_exec("/usr/bin/s 2>/dev/null");
     return $out ?: '';
 }
 
