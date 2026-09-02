@@ -21,38 +21,16 @@ if($_POST['lp1'] ?? null) {
     $lp5 = $_POST['lp5'] ?? '';
     $lp6 = $_POST['lp6'] ?? '';
 
-    if($lp1 == '') { $lp1 = '139.255.196.196'; }
+    if($lp1 == '') { $lp1 = '10.150.1.18'; }
 
-    if (filter_var($lp1, FILTER_VALIDATE_IP)) {
-	shell_exec("echo local-data: \'blacklist. 60 IN A $lp1\' > /etc/unbound/lamanlabuh.conf");
-    }
-    if (filter_var($lp2, FILTER_VALIDATE_IP)) {
-        shell_exec("echo local-data: \'blacklist. 60 IN A $lp2\' >> /etc/unbound/lamanlabuh.conf");
-    } else {
-	$lp2 = '';
-    }
-    if (filter_var($lp3, FILTER_VALIDATE_IP)) {
-        shell_exec("echo local-data: \'blacklist. 60 IN A $lp3\' >> /etc/unbound/lamanlabuh.conf");
-    } else {
-        $lp3 = '';
-    }
-    if (filter_var($lp4, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
-        shell_exec("echo local-data: \'blacklist. 60 IN AAAA $lp4\' >> /etc/unbound/lamanlabuh.conf");
-    } else {
-        $lp4 = '';
-    }
+    if (!filter_var($lp1, FILTER_VALIDATE_IP)) { $lp1 = '10.150.1.18'; }
+    if (!filter_var($lp2, FILTER_VALIDATE_IP)) { $lp2 = ''; }
+    if (!filter_var($lp3, FILTER_VALIDATE_IP)) { $lp3 = ''; }
+    if (!filter_var($lp4, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) { $lp4 = ''; }
+    if (!filter_var($lp5, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) { $lp5 = ''; }
+    if (!filter_var($lp6, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) { $lp6 = ''; }
 
-    if (filter_var($lp5, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
-        shell_exec("echo local-data: \'blacklist. 60 IN AAAA $lp5\' >> /etc/unbound/lamanlabuh.conf");
-    } else {
-        $lp5 = '';
-    }
-    if (filter_var($lp6, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
-        shell_exec("echo local-data: \'blacklist. 60 IN AAAA $lp6\' >> /etc/unbound/lamanlabuh.conf");
-    } else {
-        $lp6 = '';
-    }
-
+    // Save to panel state files (www-data writable)
     $file = fopen('lp1.ip', 'w');
     if ($file) { fwrite($file, "$lp1"); fclose($file); }
     $file = fopen('lp2.ip', 'w');
@@ -66,9 +44,10 @@ if($_POST['lp1'] ?? null) {
     $file = fopen('lp6.ip', 'w');
     if ($file) { fwrite($file, "$lp6"); fclose($file); }
 
+    // Create flag for reload.php to generate lamanlabuh.conf (runs as root via sudo)
     $file = fopen('setdns.new', 'w');
     if ($file) { fwrite($file, ''); fclose($file); }
-    echo "<script>alert('ip lamanlabuh telah diubah, silahkan reload atau reboot untuk mengaktifkan');</script>";
+    echo "<script>alert('ip lamanlabuh telah diubah, silahkan reload untuk mengaktifkan');</script>";
     $index = 'yes'; $back = 'history.go(-2)';
 }
 

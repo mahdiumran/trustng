@@ -41,7 +41,7 @@ echo '<div class="page-content">
   <div class="tng-status-card"><div class="tng-status-icon"><i class="fa-solid fa-list"></i></div><div class="tng-status-info"><span class="tng-status-name">Domain Count</span><span class="tng-status-val" id="st-count">&mdash;</span></div></div>
   <div class="tng-status-card"><div class="tng-status-icon"><i class="fa-solid fa-clock"></i></div><div class="tng-status-info"><span class="tng-status-name">Update Terakhir</span><span class="tng-status-val tng-status-val-sm" id="st-update">&mdash;</span></div></div>
   <div class="tng-status-card"><div class="tng-status-icon"><i class="fa-solid fa-heart-pulse"></i></div><div class="tng-status-info"><span class="tng-status-name">Health Terakhir</span><span class="tng-status-val" id="st-health">&mdash;</span></div></div>
-  <div class="tng-status-card"><div class="tng-status-icon"><i class="fa-solid fa-calendar-clock"></i></div><div class="tng-status-info"><span class="tng-status-name">Update Berikutnya</span><span class="tng-status-val tng-status-val-sm" id="st-next">&mdash;</span></div></div>
+  <div class="tng-status-card"><div class="tng-status-icon"><i class="fa-solid fa-clock-rotate-left"></i></div><div class="tng-status-info"><span class="tng-status-name">Update Berikutnya</span><span class="tng-status-val tng-status-val-sm" id="st-next">&mdash;</span></div></div>
 </div>
 
 <div class="di-card">

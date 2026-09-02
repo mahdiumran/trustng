@@ -82,47 +82,44 @@ if (array_key_exists('data', $_POST)) {
     trustng_state_write('clients.ip', "127.0.0.0/8\n" . str_replace("\r\n", "\n", $data4));
     trustng_state_write('clients6.ip', "::1/128\n" . str_replace("\r\n", "\n", $data6));
 
-    $lines = file('clients.ip');
-    $lines = array_unique($lines);
-    trustng_state_write('clients.ip', implode($lines));
-    $subject = file_get_contents('clients.ip');
+    $lines = trustng_state_lines('clients.ip');
+    $lines = array_unique(array_filter(array_map('trim', $lines)));
+    trustng_state_write('clients.ip', implode("\n", $lines) . "\n");
+    $subject = trustng_state_read('clients.ip');
+    $problem4 = 'no';
     foreach(preg_split("/((\r?\n)|(\r\n?))/", $subject) as $line){
+        $line = trim($line);
         if ($line === '') continue;
-	if (isValidCIDR4($line)) {
-            $problem4 = 'no';
-	} else {
-	    echo "<script>alert('$line (ipv4) tidak valid');history.back();</script>";
-	    $problem4 = 'yes';
-	}
-    }
-    $lines = file('clients6.ip');
-    $lines = array_unique($lines);
-    trustng_state_write('clients6.ip', implode($lines));
-    $subject = file_get_contents('clients6.ip');
-    foreach(preg_split("/((\r?\n)|(\r\n?))/", $subject) as $line){
-      if($line != '') {
-        if (isValidCIDR6($line)) {
-            $problem6 = 'no';
+        if (isValidCIDR4($line)) {
+            // valid
         } else {
-            echo "<script>alert('$line (ipv6) tidak valid');history.back();</script>";
-            $problem6 = 'yes';
+            echo "<script>alert('$line (ipv4) tidak valid');history.back();</script>";
+            $problem4 = 'yes';
+            break;
         }
-      }
     }
 
-    if ($problem4 != 'yes') {
-	$data4 = file_get_contents('clients.ip');
-	$data4 = preg_replace('#\s+#',', ',trim($data4));
-        shell_exec("echo \"elements = { $data4 }\" > /etc/client_set");
-        trustng_state_touch('setclient.new');
-        echo "<script>alert('recursive clients ipv4 telah diubah, silahkan reload atau reboot untuk mengaktifkan');</script>";
+    $lines6 = trustng_state_lines('clients6.ip');
+    $lines6 = array_unique(array_filter(array_map('trim', $lines6)));
+    trustng_state_write('clients6.ip', implode("\n", $lines6) . "\n");
+    $subject6 = trustng_state_read('clients6.ip');
+    $problem6 = 'no';
+    foreach(preg_split("/((\r?\n)|(\r\n?))/", $subject6) as $line){
+        $line = trim($line);
+        if ($line !== '') {
+            if (isValidCIDR6($line)) {
+                // valid
+            } else {
+                echo "<script>alert('$line (ipv6) tidak valid');history.back();</script>";
+                $problem6 = 'yes';
+                break;
+            }
+        }
     }
-    if ($problem6 != 'yes') {
-        $data6 = file_get_contents('clients6.ip');
-	$data6 = preg_replace('#\s+#',', ',trim($data6));
-        shell_exec("echo \"elements = { $data6 }\" > /etc/client6_set");
+
+    if ($problem4 !== 'yes' && $problem6 !== 'yes') {
         trustng_state_touch('setclient.new');
-        echo "<script>alert('recursive clients ipv4 telah diubah, silahkan reload atau reboot untuk mengaktifkan');</script>";
+        echo "<script>alert('ACL clients berhasil disimpan.\\nSilahkan buka menu Maintenance -> Reload System untuk mengaktifkan perubahan.');</script>";
     }
 
     $index = 'yes'; $back = 'history.go(-2)';

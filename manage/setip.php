@@ -13,6 +13,18 @@ $allowed_prefix_ip = "https://$myip:40443/";
 
 $back = 'history.back()';
 
+function trustng_write_interfaces($content)
+{
+    $tmp = tempnam('/tmp', 'trustng-if-');
+    if ($tmp === false) return false;
+    file_put_contents($tmp, $content);
+    $output = [];
+    $status = 1;
+    exec('sudo /usr/bin/cp ' . escapeshellarg($tmp) . ' /etc/network/interfaces 2>&1', $output, $status);
+    @unlink($tmp);
+    return $status === 0;
+}
+
 function isValidCIDR($cidr)
 {
     $parts = explode('/', $cidr);
@@ -61,62 +73,83 @@ if($_POST['ipaddr'] ?? null) {
     $ip6prefix = $_POST['ip6prefix'] ?? '';
     $ip6gw = $_POST['ip6gateway'] ?? '';
 
+    $ifContent = '';
     if ($dhcp != 'yes') {
         if (filter_var($ip, FILTER_VALIDATE_IP)) {
-	    if (filter_var($mask, FILTER_VALIDATE_IP)) {
-	        if (filter_var($gw, FILTER_VALIDATE_IP)) {
-		    shell_exec("echo \"auto lo\niface lo inet loopback\n\nallow-hotplug eth0\niface eth0 inet static\n    address $ip\n    netmask $mask\n    gateway $gw\n\nauto eth0:0\niface eth0:0 inet static\n    address 192.168.168.168/24\n\" > /etc/network/interfaces");
- 		    $file = fopen('ipaddr.data', 'w');
- 		    if ($file) { fwrite($file, "$ip,$mask,$gw"); fclose($file); }
-                    $file = fopen('setip.new', 'w');
-                    if ($file) { fwrite($file, ''); fclose($file); }
-                    echo "<script>alert('ip address telah diubah, silahkan reload atau reboot untuk mengaktifkan');</script>";
+		    if (filter_var($mask, FILTER_VALIDATE_IP)) {
+		        if (filter_var($gw, FILTER_VALIDATE_IP)) {
+			        $ifContent = "auto lo
+iface lo inet loopback
+
+allow-hotplug eth0
+iface eth0 inet static
+    address $ip
+    netmask $mask
+    gateway $gw
+
+auto eth0:0
+iface eth0:0 inet static
+    address 192.168.168.168/24
+";
+	 		        trustng_state_write('ipaddr.data', "$ip,$mask,$gw");
+	                trustng_state_touch('setip.new');
+			    } else {
+			        echo 'gateway gagal, mohon cek ulang isian gateway'; exit;
+			    }
+		    } else {
+			    echo 'netmask gagal, mohon cek ulang isian netmask'; exit;
+		    }
 		} else {
-		    echo 'gateway gagal, mohon cek ulang isian gateway'; exit;
+		    echo 'ip gagal, mohon cek ulang isian ip'; exit;
 		}
-	    } else {
-		echo 'netmask gagal, mohon cek ulang isian netmask'; exit;
-	    }
-	} else {
-	    echo 'ip gagal, mohon cek ulang isian ip'; exit;
-	}
     } else {
-	shell_exec("echo \"auto lo\niface lo inet loopback\n\nallow-hotplug eth0\niface eth0 inet dhcp\n\nauto eth0:0\niface eth0:0 inet static\n    address 192.168.168.168/24\n\" > /etc/network/interfaces");
-        $file = fopen('setip.new', 'w');
-        if ($file) { fwrite($file, ''); fclose($file); }
-        echo "<script>alert('ip address telah diubah, silahkan reload atau reboot untuk mengaktifkan');</script>";
+		$ifContent = "auto lo
+iface lo inet loopback
+
+allow-hotplug eth0
+iface eth0 inet dhcp
+
+auto eth0:0
+iface eth0:0 inet static
+    address 192.168.168.168/24
+";
+	    trustng_state_touch('setip.new');
     }
 
     if ($ip6auto != 'yes') {
-        $file = fopen('ip6auto', 'w');
-        if ($file) { fwrite($file, 'no'); fclose($file); }
+        trustng_state_write('ip6auto', 'no');
 
-	if ($ip6 != '') {
-            if (filter_var($ip6, FILTER_VALIDATE_IP)) {
-                if (filter_var($ip6gw, FILTER_VALIDATE_IP)) {
-	            shell_exec("echo \"iface eth0 inet6 static\n    address $ip6\n    netmask $ip6prefix\n    gateway $ip6gw\" >> /etc/network/interfaces");
-                    $file = fopen('ip6addr.data', 'w');
-                    if ($file) { fwrite($file, "$ip6,$ip6prefix,$ip6gw"); fclose($file); }
-                    $file = fopen('setip6.new', 'w');
-                    if ($file) { fwrite($file, ''); fclose($file); }
-                    echo "<script>alert('ip6 address telah diubah, silahkan reload atau reboot untuk mengaktifkan');</script>";
-                } else {
-                    echo 'ip6 gateway gagal, mohon cek ulang isian gateway'; exit;
-                }
-            } else {
-                echo 'ip6 gagal, mohon cek ulang isian ip'; exit;
-            }
-	} else {
-            $file = fopen('ip6addr.data', 'w');
-            if ($file) { fwrite($file, "$ip6,$ip6prefix,$ip6gw"); fclose($file); }
-	}
+		if ($ip6 != '') {
+	            if (filter_var($ip6, FILTER_VALIDATE_IP)) {
+	                if (filter_var($ip6gw, FILTER_VALIDATE_IP)) {
+		                $ifContent .= "
+iface eth0 inet6 static
+    address $ip6
+    netmask $ip6prefix
+    gateway $ip6gw
+";
+	                    trustng_state_write('ip6addr.data', "$ip6,$ip6prefix,$ip6gw");
+	                    trustng_state_touch('setip6.new');
+	                } else {
+	                    echo 'ip6 gateway gagal, mohon cek ulang isian gateway'; exit;
+	                }
+	            } else {
+	                echo 'ip6 gagal, mohon cek ulang isian ip'; exit;
+	            }
+		} else {
+	            trustng_state_write('ip6addr.data', "$ip6,$ip6prefix,$ip6gw");
+		}
     } else {
-        shell_exec("echo \"iface eth0 inet6 dhcp\n\" >> /etc/network/interfaces");
-        $file = fopen('setip.new', 'w');
-        if ($file) { fwrite($file, ''); fclose($file); }
-        echo "<script>alert('ip6 address telah diubah, silahkan reload atau reboot untuk mengaktifkan');</script>";
-        $file = fopen('ip6auto', 'w');
-        if ($file) { fwrite($file, 'yes'); fclose($file); }
+        $ifContent .= "
+iface eth0 inet6 dhcp
+";
+        trustng_state_touch('setip.new');
+        trustng_state_write('ip6auto', 'yes');
+    }
+
+    if ($ifContent !== '') {
+        trustng_write_interfaces($ifContent);
+        echo "<script>alert('Konfigurasi IP address berhasil disimpan.\nSilahkan buka menu Maintenance -> Reload System untuk mengaktifkan perubahan.');</script>";
     }
     $index = 'yes'; $back = 'history.go(-2)';
 }
@@ -124,40 +157,38 @@ if($_POST['ipaddr'] ?? null) {
 if($_POST['ipalias'] ?? null) {
     $data4 = $_POST['data'] ?? '';
     foreach(preg_split("/((\r?\n)|(\r\n?))/", $data4) as $line){
+        $line = trim($line);
         if (isValidCIDR($line)) {
         } else if ($line !='') {
             echo "<script>alert('$line tidak valid');history.back();</script>";
             $problem4 = 'yes';
+            break;
         }
     }
     $data6 = $_POST['data6'] ?? '';
     foreach(preg_split("/((\r?\n)|(\r\n?))/", $data6) as $line){
+        $line = trim($line);
         if (isValidCIDR($line)) {
         } else if ($line !='') {
             echo "<script>alert('$line tidak valid');history.back();</script>";
             $problem6 = 'yes';
+            break;
         }
     }
 
     if (($problem4 ?? '') != 'yes') {
-        $file = fopen('ipalias.data', 'w');
-        if ($file) { fwrite($file, "$data4"); fclose($file); }
-        shell_exec("dos2unix ipalias.data 2>/dev/null");
+        trustng_state_write('ipalias.data', "$data4");
         $index = 'yes'; $back = 'history.go(-2)';
-        $file = fopen('setalias.new', 'w');
-        if ($file) { fwrite($file, ''); fclose($file); }
-        echo "<script>alert('ip alias telah diubah, silahkan reload atau reboot untuk mengaktifkan');</script>";
+        trustng_state_touch('setalias.new');
     }
     if (($problem6 ?? '') != 'yes') {
-        $file = fopen('ipalias6.data', 'w');
-        if ($file) { fwrite($file, "$data6"); fclose($file); }
-        shell_exec("dos2unix ipalias6.data 2>/dev/null");
+        trustng_state_write('ipalias6.data', "$data6");
         $index = 'yes'; $back = 'history.go(-2)';
-        $file = fopen('setalias.new', 'w');
-        if ($file) { fwrite($file, ''); fclose($file); }
-        echo "<script>alert('ip6 alias telah diubah, silahkan reload atau reboot untuk mengaktifkan');</script>";
+        trustng_state_touch('setalias.new');
     }
-
+    if (($problem4 ?? '') != 'yes' && ($problem6 ?? '') != 'yes') {
+        echo "<script>alert('IP alias berhasil disimpan.\nSilahkan buka menu Maintenance -> Reload System untuk mengaktifkan perubahan.');</script>";
+    }
 }
 
 if (strpos($referer, $allowed_prefix) !== 0 && strpos($referer, $allowed_prefix_ip) !== 0) {

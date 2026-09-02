@@ -17,7 +17,10 @@ if (!is_array($refererParts) || ($refererParts['scheme'] ?? '') !== 'https'
 
 $output = array();
 $status = 1;
-exec('sudo /var/www/manage/repairmunin.sh 2>&1', $output, $status);
+$script = file_exists('/usr/local/sbin/repairmunin.sh')
+    ? '/usr/local/sbin/repairmunin.sh'
+    : __DIR__ . '/repairmunin.sh';
+exec('sudo ' . escapeshellarg($script) . ' 2>&1', $output, $status);
 $message = $status === 0
     ? 'Repair Munin selesai. Grafik akan dibangun kembali dalam beberapa menit.'
     : 'Repair Munin gagal: ' . implode("\n", $output);
