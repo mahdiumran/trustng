@@ -13,17 +13,22 @@ $blocked_queries = 0;
 $cache_hits = 0;
 
 if ($stats) {
-    // Use total.* aggregate lines
-    if (preg_match('/^total\.num\.queries\s*=\s*(\d+)/m', $stats, $m)) {
-        $total_queries = intval($m[1]);
+    // Parse all key=value pairs
+    foreach (explode("\n", $stats) as $ln) {
+        if (preg_match('/^([^=]+)=(\d+)$/', trim($ln), $m)) {
+            $key = $m[1];
+            $val = intval($m[2]);
+            // Match num.queries, num.blacklist, num.cachehits (top-level, not per-thread)
+            if ($key === 'num.queries') $total_queries = $val;
+            elseif ($key === 'num.blacklist') $blocked_queries = $val;
+            elseif ($key === 'num.cachehits') $cache_hits = $val;
+            // Also try total.* prefix
+            elseif ($key === 'total.num.queries') $total_queries = $val;
+            elseif ($key === 'total.num.blacklist') $blocked_queries = $val;
+            elseif ($key === 'total.num.cachehits') $cache_hits = $val;
+        }
     }
-    if (preg_match('/^total\.num\.blacklist\s*=\s*(\d+)/m', $stats, $m)) {
-        $blocked_queries = intval($m[1]);
-    }
-    if (preg_match('/^total\.num\.cachehits\s*=\s*(\d+)/m', $stats, $m)) {
-        $cache_hits = intval($m[1]);
-    }
-    // Fallback: sum thread values
+    // Fallback: sum thread values if still zero
     if ($total_queries === 0) {
         if (preg_match_all('/thread\d+\.num\.queries\s*=\s*(\d+)/i', $stats, $matches)) {
             foreach ($matches[1] as $v) $total_queries += intval($v);
