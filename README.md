@@ -29,7 +29,9 @@ manage/                      ← project root (git repo)
 ├── bin/                     ← patched Unbound binaries
 │   ├── unbound
 │   ├── unbound-checkconf
-│   └── unbound-control
+│   ├── unbound-control
+│   ├── unbound-anchor
+│   └── unbound-host
 │
 ├── conf/                    ← configuration templates
 │   ├── unbound.conf
@@ -37,8 +39,9 @@ manage/                      ← project root (git repo)
 │   └── nftables.conf        ← DNS firewall rules
 │
 ├── scripts/                 ← utility scripts
-│   ├── create_domain_cdb.py ← generate CDB blacklist database
-│   ├── update-blocklist     ← blocklist update script
+│   ├── create_domain_cdb.py   ← generate CDB blacklist database
+│   ├── update-blocklist       ← blocklist update script
+│   ├── trustng-metrics-sampler ← system metrics sampler
 │   └── validate-repository.sh
 │
 ├── systemd/                 ← systemd unit files
@@ -100,8 +103,12 @@ lm-sensors
 - `fileinfo` — upload handling
 
 ### Runtime Dependencies
-- `/usr/bin/s` — system status utility (site-specific)
-- `/usr/bin/r` — request list utility (site-specific)
+- Patched `unbound`, `unbound-checkconf`, dan `unbound-control` dari direktori `bin/`
+- `unbound-anchor` dan `unbound-host` dari direktori `bin/` (installer juga memiliki fallback paket sistem)
+- `trustng-metrics-sampler` dari direktori `scripts/`
+- User PHP-FPM `www-data` harus menjadi anggota grup `unbound` agar dapat mengakses control socket
+
+Dashboard statistik tidak lagi bergantung pada binary legacy `/usr/bin/s`; endpoint `s.php` membaca `unbound-control stats_noreset` secara langsung.
 
 ## Instalasi
 

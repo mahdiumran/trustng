@@ -47,6 +47,9 @@ id unbound >/dev/null 2>&1 || {
 install -d -m 0755 /etc/unbound /etc/unbound/db /etc/unbound/run /etc/unbound/key /usr/local/sbin /usr/local/bin /usr/local/libexec
 install -d -o unbound -g unbound -m 0755 /etc/unbound/run /etc/unbound/db
 
+# Tambah www-data ke group unbound (agar PHP-FPM bisa akses unbound-control socket)
+adduser www-data unbound 2>/dev/null || true
+
 # Create /usr/local/etc/unbound/ dir and symlink for unbound-control (expects config here)
 mkdir -p /usr/local/etc/unbound
 ln -sf /etc/unbound/unbound.conf /usr/local/etc/unbound/unbound.conf
@@ -108,9 +111,12 @@ setup_interface_rename
 install -m 0755 "$DEPLOY_DIR/bin/unbound"          /usr/local/sbin/unbound
 install -m 0755 "$DEPLOY_DIR/bin/unbound-checkconf" /usr/local/sbin/unbound-checkconf
 install -m 0755 "$DEPLOY_DIR/bin/unbound-control"   /usr/local/sbin/unbound-control
+[ -f "$DEPLOY_DIR/bin/unbound-anchor" ] && install -m 0755 "$DEPLOY_DIR/bin/unbound-anchor" /usr/local/sbin/unbound-anchor
+[ -f "$DEPLOY_DIR/bin/unbound-host" ] && install -m 0755 "$DEPLOY_DIR/bin/unbound-host" /usr/local/sbin/unbound-host
 install -m 0755 "$DEPLOY_DIR/scripts/create_domain_cdb.py" /usr/local/libexec/create_domain_cdb.py
 install -m 0755 "$DEPLOY_DIR/scripts/update-blocklist"     /usr/local/sbin/update-blocklist
 [ -f "$DEPLOY_DIR/scripts/resetpass.sh" ] && install -m 0755 "$DEPLOY_DIR/scripts/resetpass.sh" /usr/local/sbin/resetpass.sh
+[ -f "$DEPLOY_DIR/scripts/trustng-metrics-sampler" ] && install -m 0755 "$DEPLOY_DIR/scripts/trustng-metrics-sampler" /usr/local/sbin/trustng-metrics-sampler
 [ -f "$DEPLOY_DIR/manage/repairmunin.sh" ] && install -m 0755 "$DEPLOY_DIR/manage/repairmunin.sh" /usr/local/sbin/repairmunin.sh
 
 # ---- 5. Unbound config (idempotent)

@@ -1,0 +1,15 @@
+#!/bin/sh
+# TRUST-NG metrics sampler: snapshot counter unbound -> SQLite (arsip riwayat)
+DB=/var/lib/trustng-metrics/metrics.db
+S=$(unbound-control stats_noreset 2>/dev/null)
+[ -n "$S" ] || exit 1
+get() { echo "$S" | awk -F= -v k="$1" '$1==k{print int($2); exit}'; }
+TS=$(date +%s)
+sqlite3 "$DB" "
+INSERT INTO metrics_raw(ts,num_queries,num_blacklist,num_cachehits,num_cachemiss,
+    num_recursivereplies,num_prefetch,queries_ip_ratelimited,uptime)
+VALUES($TS,$(get total.num.queries),$(get total.num.blacklist),$(get total.num.cachehits),
+    $(get total.num.cachemiss),$(get total.num.recursivereplies),$(get total.num.prefetch),
+    $(get total.num.queries_ip_ratelimited),$(get time.up));
+DELETE FROM metrics_raw WHERE ts < $TS - 7776000;
+"

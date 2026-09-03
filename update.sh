@@ -97,11 +97,17 @@ if [ "$MODE" = "blocklist" ]; then
 fi
 
 if [ "$do_binary" = 1 ]; then
-    run_remote "cp -a /usr/local/sbin/unbound /usr/local/sbin/unbound-checkconf /usr/local/sbin/unbound-control $BACKUP/ 2>/dev/null || true"
+    run_remote "cp -a /usr/local/sbin/unbound /usr/local/sbin/unbound-checkconf /usr/local/sbin/unbound-control /usr/local/sbin/unbound-anchor /usr/local/sbin/unbound-host $BACKUP/ 2>/dev/null || true"
     for f in unbound unbound-checkconf unbound-control; do
         push_artifact "$DEPLOY_DIR/bin/$f" "/tmp/$f.new"
         run_remote "install -m 0755 /tmp/$f.new /usr/local/sbin/$f && rm -f /tmp/$f.new"
     done
+    # Deploy optional binaries if present
+    for f in unbound-anchor unbound-host; do
+        [ -f "$DEPLOY_DIR/bin/$f" ] && push_artifact "$DEPLOY_DIR/bin/$f" "/tmp/$f.new" && run_remote "install -m 0755 /tmp/$f.new /usr/local/sbin/$f && rm -f /tmp/$f.new"
+    done
+    # Deploy trustng-metrics-sampler if present
+    [ -f "$DEPLOY_DIR/scripts/trustng-metrics-sampler" ] && push_artifact "$DEPLOY_DIR/scripts/trustng-metrics-sampler" "/tmp/trustng-metrics-sampler.new" && run_remote "install -m 0755 /tmp/trustng-metrics-sampler.new /usr/local/sbin/trustng-metrics-sampler && rm -f /tmp/trustng-metrics-sampler.new"
     echo "[OK] binary terpasang (backup di $BACKUP)"
 fi
 

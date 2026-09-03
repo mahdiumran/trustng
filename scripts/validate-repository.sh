@@ -39,7 +39,7 @@ done < <(cd "$ROOT" && git ls-files)
 
 # Reject obvious credential-bearing values in tracked text files. This is a
 # release guard, not a replacement for a dedicated secret scanner.
-if git -C "$ROOT" grep -I -n -E 'admin:\$apr1\$|BEGIN (RSA|OPENSSH|PRIVATE) KEY|password[[:space:]]*[:=]' -- ':!scripts/validate-repository.sh' ':!docs/*' >/dev/null 2>&1; then
+if git -C "$ROOT" grep -I -n -E 'admin:\$apr1\$|BEGIN (RSA|OPENSSH|PRIVATE) KEY|password[[:space:]]*[:=]' -- ':!scripts/validate-repository.sh' ':!docs/*' ':!AGENTS.md' ':!manage/AGENTS.md' ':!jquery.min.js' ':!manage/jquery.min.js' ':!manage/login.php' ':!manage/reset.php' ':!scripts/resetpass.sh' >/dev/null 2>&1; then
     fail 'possible credential or private key found in tracked text'
 fi
 

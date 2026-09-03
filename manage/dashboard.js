@@ -39,8 +39,9 @@
     var rateLine = text.match(/queries\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*queries\/s/i);
     if (rateLine) return { value: parseFloat(rateLine[1]), mode: "queries/s" };
 
-    // Fallback: raw total.num.queries from dn stats
-    var total = text.match(/total\.num\.queries\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)/i);
+    // Fallback: raw cumulative value from Unbound. Patched builds may
+    // expose num.queries without the total. prefix.
+    var total = text.match(/(?:^|\n)(?:total\.)?num\.queries\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)/i);
     if (total) return { value: parseFloat(total[1]), mode: "total" };
 
     var anyNumber = text.match(/[0-9]+(?:\.[0-9]+)?/);
@@ -142,8 +143,8 @@
     var blRate = text.match(/blacklist\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*queries?\/s/i);
     if (blRate) return { value: parseFloat(blRate[1]), mode: "blocked/s" };
 
-    // Fallback: raw total.num.blacklist cumulative
-    var blTotal = text.match(/total\.num\.blacklist\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)/i);
+    // Fallback: raw cumulative value, with or without total. prefix.
+    var blTotal = text.match(/(?:^|\n)(?:total\.)?num\.blacklist\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)/i);
     if (blTotal) return { value: parseFloat(blTotal[1]), mode: "total" };
 
     return { value: 0, mode: "blocked/s" };
