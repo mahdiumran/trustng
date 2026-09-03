@@ -28,11 +28,17 @@ foreach (explode("\n", $raw) as $ln) {
 $derive = array('num.queries','num.blacklist','num.cachehits','num.cachemiss','num.recursivereplies','num.prefetch');
 foreach ($derive as $suf) {
     if (!isset($pairs['total.' . $suf])) {
-        $sum = 0; $found = false;
-        foreach ($pairs as $k => $v) {
-            if (preg_match('/^thread\d+\.' . preg_quote($suf, '/') . '$/', $k)) { $sum += (float)$v; $found = true; }
+        // Try top-level key first (e.g. num.queries)
+        if (isset($pairs[$suf])) {
+            $pairs['total.' . $suf] = $pairs[$suf];
+        } else {
+            // Fallback: sum thread values
+            $sum = 0; $found = false;
+            foreach ($pairs as $k => $v) {
+                if (preg_match('/^thread\d+\.' . preg_quote($suf, '/') . '$/', $k)) { $sum += (float)$v; $found = true; }
+            }
+            if ($found) $pairs['total.' . $suf] = (string)$sum;
         }
-        if ($found) $pairs['total.' . $suf] = (string)$sum;
     }
 }
 $st = function($k, $d = '0') { global $pairs; return isset($pairs[$k]) ? $pairs[$k] : $d; };
