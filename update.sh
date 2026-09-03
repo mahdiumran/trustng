@@ -4,7 +4,8 @@
 #   ./update.sh all       # binary + config + web + scripts (default)
 #   ./update.sh binary    # hanya unbound, checkconf, control
 #   ./update.sh config    # hanya unbound.conf (+checkconf gate)
-#   ./update.sh web       # hanya web panel files (manage/*.php)
+#   ./update.sh web       # web panel files (all files except *.data)
+#   ./update.sh web-changed # web panel files (only changed files)
 #   ./update.sh blocklist # trigger updater manual di server
 #
 # Keamanan: config divalidasi unbound-checkconf SEBELUM swap;
@@ -12,6 +13,8 @@
 set -u
 
 DEPLOY_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+WEBROOT="/var/www/manage"
+PANEL_SRC="$DEPLOY_DIR/manage"
 MODE=${1:-all}
 BACKUP=/var/backups/trustng-update-$(date +%Y%m%dT%H%M%S)
 REMOTE=${REMOTE:-}
@@ -77,14 +80,15 @@ UDEV
 }
 setup_interface_rename'
 
-do_binary=0; do_config=0; do_blocklist=0; do_web=0
+do_binary=0; do_config=0; do_blocklist=0; do_web=0; do_web_changed=0
 case "$MODE" in
-    all)       do_binary=1; do_config=1; do_web=1 ;;
-    binary)    do_binary=1 ;;
-    config)    do_config=1 ;;
-    web)       do_web=1 ;;
-    blocklist) do_blocklist=1 ;;
-    *) echo "mode tidak dikenal: $MODE (pakai all|binary|config|web|blocklist)" >&2; exit 64 ;;
+    all)         do_binary=1; do_config=1; do_web=1 ;;
+    binary)      do_binary=1 ;;
+    config)      do_config=1 ;;
+    web)         do_web=1 ;;
+    web-changed) do_web_changed=1 ;;
+    blocklist)   do_blocklist=1 ;;
+    *) echo "mode tidak dikenal: $MODE (pakai all|binary|config|web|web-changed|blocklist)" >&2; exit 64 ;;
 esac
 
 if [ "$MODE" = "blocklist" ]; then
@@ -115,26 +119,40 @@ if [ "$do_config" = 1 ]; then
 fi
 
 if [ "$do_web" = 1 ]; then
-    WEBROOT="/var/www/manage"
     # backup current web files
-    run_remote "mkdir -p $BACKUP/web && cp -a $WEBROOT/*.php $WEBROOT/includes/ $WEBROOT/manage/ $BACKUP/web/ 2>/dev/null || true"
+    run_remote "mkdir -p $BACKUP/web && cp -a $WEBROOT/* $BACKUP/web/ 2>/dev/null || true"
 
-    # deploy PHP files (use scp, no rsync dependency)
+    # deploy web files (mirror install.sh structure)
     if [ -n "$REMOTE" ]; then
-        for f in $(find "$DEPLOY_DIR/manage" -maxdepth 1 -name '*.php' -type f); do
-            scp $SSH_OPTS "$f" "root@$REMOTE:$WEBROOT/"
+        # copy files preserving structure
+        find "$PANEL_SRC" -type f -print0 | while IFS= read -r -d '' source; do
+            relative=${source#"$PANEL_SRC/"}
+            [ -z "$relative" ] && continue
+            # skip excluded files
+            case "$relative" in
+                *.data|*.data.set|*.db|*.dig|*.ip|*.log|*.new|*.pending|*.bak|*.lock|*.key) continue ;;
+                .htpasswd|setup.mulai|recovery.key|*.md|tests_port_config.php|backup-*/*) continue ;;
+            esac
+            destination="$WEBROOT/$relative"
+            run_remote "mkdir -p $(dirname "$destination")"
+            scp $SSH_OPTS "$source" "root@$REMOTE:$destination"
         done
-        # also deploy includes/ and manage/ subdirs if they exist
-        [ -d "$DEPLOY_DIR/manage/includes" ] && scp $SSH_OPTS -r "$DEPLOY_DIR/manage/includes/"* "root@$REMOTE:$WEBROOT/includes/" 2>/dev/null || true
-        [ -d "$DEPLOY_DIR/manage/manage" ] && scp $SSH_OPTS -r "$DEPLOY_DIR/manage/manage/"* "root@$REMOTE:$WEBROOT/manage/" 2>/dev/null || true
     else
-        for f in $(find "$DEPLOY_DIR/manage" -maxdepth 1 -name '*.php' -type f); do
-            install -m 0644 "$f" "$WEBROOT/"
+        find "$PANEL_SRC" -type f -print0 | while IFS= read -r -d '' source; do
+            relative=${source#"$PANEL_SRC/"}
+            [ -z "$relative" ] && continue
+            case "$relative" in
+                *.data|*.data.set|*.db|*.dig|*.ip|*.log|*.new|*.pending|*.bak|*.lock|*.key) continue ;;
+                .htpasswd|setup.mulai|recovery.key|*.md|tests_port_config.php|backup-*/*) continue ;;
+            esac
+            destination="$WEBROOT/$relative"
+            install -d -m 0755 "$(dirname "$destination")"
+            install -m 0644 "$source" "$destination"
         done
-        [ -d "$DEPLOY_DIR/manage/includes" ] && cp -a "$DEPLOY_DIR/manage/includes/"* "$WEBROOT/includes/" 2>/dev/null || true
-        [ -d "$DEPLOY_DIR/manage/manage" ] && cp -a "$DEPLOY_DIR/manage/manage/"* "$WEBROOT/manage/" 2>/dev/null || true
     fi
     run_remote "chown -R root:root $WEBROOT && find $WEBROOT -type f -name '*.sh' -exec chmod 0755 {} +"
+    # Data files writable by www-data (panel runtime state)
+    run_remote "for f in $WEBROOT/*.data $WEBROOT/*.db $WEBROOT/*.ip $WEBROOT/*.count $WEBROOT/whitelist.db $WEBROOT/blacklist.local.db; do [ -f \"\$f\" ] && chown www-data:www-data \"\$f\" && chmod 0664 \"\$f\"; done 2>/dev/null || true"
 
     # Fix PHP-FPM PATH if needed (ensure /usr/local/sbin is available)
     run_remote 'PHP_FPM_POOL="/etc/php/8.2/fpm/pool.d/www.conf"
@@ -145,6 +163,64 @@ if [ "$do_web" = 1 ]; then
     fi'
 
     echo "[OK] web panel terpasang (backup di $BACKUP/web)"
+fi
+
+if [ "$do_web_changed" = 1 ]; then
+    echo "[INFO] Deploying only changed files..."
+    run_remote "mkdir -p $BACKUP/web"
+
+    # deploy only changed files
+    if [ -n "$REMOTE" ]; then
+        find "$PANEL_SRC" -type f -print0 | while IFS= read -r -d '' source; do
+            relative=${source#"$PANEL_SRC/"}
+            [ -z "$relative" ] && continue
+            case "$relative" in
+                *.data|*.data.set|*.db|*.dig|*.ip|*.log|*.new|*.pending|*.bak|*.lock|*.key) continue ;;
+                .htpasswd|setup.mulai|recovery.key|*.md|tests_port_config.php|backup-*/*) continue ;;
+            esac
+            destination="$WEBROOT/$relative"
+            # compare checksums
+            src_md5=$(md5sum "$source" 2>/dev/null | awk '{print $1}')
+            dst_md5=$(ssh $SSH_OPTS "root@$REMOTE" "md5sum '$destination' 2>/dev/null" | awk '{print $1}')
+            if [ "$src_md5" != "$dst_md5" ]; then
+                echo "[UPDATE] $relative"
+                run_remote "mkdir -p $(dirname "$destination")"
+                scp $SSH_OPTS "$source" "root@$REMOTE:$destination"
+            fi
+        done
+    else
+        find "$PANEL_SRC" -type f -print0 | while IFS= read -r -d '' source; do
+            relative=${source#"$PANEL_SRC/"}
+            [ -z "$relative" ] && continue
+            case "$relative" in
+                *.data|*.data.set|*.db|*.dig|*.ip|*.log|*.new|*.pending|*.bak|*.lock|*.key) continue ;;
+                .htpasswd|setup.mulai|recovery.key|*.md|tests_port_config.php|backup-*/*) continue ;;
+            esac
+            destination="$WEBROOT/$relative"
+            # compare checksums
+            src_md5=$(md5sum "$source" 2>/dev/null | awk '{print $1}')
+            dst_md5=$(md5sum "$destination" 2>/dev/null | awk '{print $1}')
+            if [ "$src_md5" != "$dst_md5" ]; then
+                echo "[UPDATE] $relative"
+                # backup before overwrite
+                [ -f "$destination" ] && cp -a "$destination" "$BACKUP/web/$relative" 2>/dev/null || true
+                install -d -m 0755 "$(dirname "$destination")"
+                install -m 0644 "$source" "$destination"
+            fi
+        done
+    fi
+    run_remote "chown -R root:root $WEBROOT && find $WEBROOT -type f -name '*.sh' -exec chmod 0755 {} +"
+    run_remote "for f in $WEBROOT/*.data $WEBROOT/*.db $WEBROOT/*.ip $WEBROOT/*.count $WEBROOT/whitelist.db $WEBROOT/blacklist.local.db; do [ -f \"\$f\" ] && chown www-data:www-data \"\$f\" && chmod 0664 \"\$f\"; done 2>/dev/null || true"
+
+    # Fix PHP-FPM PATH if needed
+    run_remote 'PHP_FPM_POOL="/etc/php/8.2/fpm/pool.d/www.conf"
+    if [ -f "$PHP_FPM_POOL" ] && grep -q "^;env\[PATH\]" "$PHP_FPM_POOL" 2>/dev/null; then
+        sed -i "s|^;env\[PATH\].*|env[PATH] = /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin|" "$PHP_FPM_POOL"
+        systemctl restart php8.2-fpm 2>/dev/null || true
+        echo "[OK] PHP-FPM PATH updated"
+    fi'
+
+    echo "[OK] web panel updated (changed files only)"
 fi
 
 if [ "$do_binary" = 1 ]; then
