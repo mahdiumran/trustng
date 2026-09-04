@@ -189,41 +189,14 @@ $statusBadge = function($val) {
     return 'badge-warn';
 };
 
-// --- DNS Statistics ---
-// Cumulative totals from Unbound stats
-$unbound_stats = @shell_exec("/usr/local/sbin/unbound-control stats_noreset 2>/dev/null");
-if (!$unbound_stats) {
-    $unbound_stats = @shell_exec("unbound-control stats_noreset 2>/dev/null");
-}
-$totalQueries = 0;
-$blockedQueries = 0;
-$cacheHits = 0;
-if ($unbound_stats !== null) {
-    // Parse all key=value pairs directly
-    foreach (explode("\n", $unbound_stats) as $ln) {
-        if (preg_match('/^([^=]+)=(\d+)$/', trim($ln), $m)) {
-            $key = $m[1];
-            $val = intval($m[2]);
-            if ($key === 'num.queries') $totalQueries = $val;
-            elseif ($key === 'num.blacklist') $blockedQueries = $val;
-            elseif ($key === 'num.cachehits') $cacheHits = $val;
-            elseif ($key === 'total.num.queries') $totalQueries = $val;
-            elseif ($key === 'total.num.blacklist') $blockedQueries = $val;
-            elseif ($key === 'total.num.cachehits') $cacheHits = $val;
-        }
-    }
-    // Fallback: sum thread values if still zero
-    if ($totalQueries === 0) {
-        if (preg_match_all('/thread\d+\.num\.queries\s*=\s*(\d+)/i', $unbound_stats, $matches)) {
-            foreach ($matches[1] as $v) $totalQueries += intval($v);
-        }
-    }
-    if ($blockedQueries === 0) {
-        if (preg_match_all('/thread\d+\.num\.blacklist\s*=\s*(\d+)/i', $unbound_stats, $matches)) {
-            foreach ($matches[1] as $v) $blockedQueries += intval($v);
-        }
-    }
-}
+// --- DNS Statistics via resilient helper ---
+require_once __DIR__ . '/includes/unbound.php';
+$unbound_stats = tng_unbound_stats_raw();
+$pairs = tng_unbound_stats_pairs($unbound_stats);
+$totalQueries = intval($pairs['total.num.queries'] ?? 0);
+$blockedQueries = intval($pairs['total.num.blacklist'] ?? 0);
+$cacheHits = intval($pairs['total.num.cachehits'] ?? 0);
+$statsErr = ($unbound_stats === '' || preg_match('/^error:|^could not/i', trim($unbound_stats))) ? ($unbound_stats ?: 'unbound-control tidak merespon') : '';
 
 // Trust+ blocklist entries count
 $trustCount = @file_get_contents('/etc/unbound/db/trust.count');

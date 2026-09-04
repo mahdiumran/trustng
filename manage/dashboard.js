@@ -35,25 +35,38 @@
   }
 
   function extractStat(text) {
+    if (/error:|Permission denied|could not read|unbound-control tidak/i.test(text)) {
+      return { value: 0, mode: "error" };
+    }
     // /usr/bin/s outputs: "queries  :   123 queries/s"
     var rateLine = text.match(/queries\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*queries\/s/i);
     if (rateLine) return { value: parseFloat(rateLine[1]), mode: "queries/s" };
 
-    // Fallback: raw cumulative value from Unbound. Patched builds may
-    // expose num.queries without the total. prefix.
+    // Fallback: raw cumulative value from Unbound. Thread-only builds: thread0.num.queries
     var total = text.match(/(?:^|\n)(?:total\.)?num\.queries\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)/i);
     if (total) return { value: parseFloat(total[1]), mode: "total" };
+    var thread = text.match(/thread\d+\.num\.queries\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)/i);
+    if (thread) return { value: parseFloat(thread[1]), mode: "total" };
 
     var anyNumber = text.match(/[0-9]+(?:\.[0-9]+)?/);
-    return { value: anyNumber ? parseFloat(anyNumber[0]) : 0, mode: "sample" };
+    if (!anyNumber) return { value: 0, mode: "error" };
+    return { value: parseFloat(anyNumber[0]), mode: "sample" };
   }
 
   function pushPoint(sample) {
     var now = Date.now();
     var value = sample.value;
     var label = sample.mode;
-
-    // If we got a cumulative total, compute rate from delta
+    if (sample.mode === "error") {
+      valueNode.textContent = "—";
+      modeNode.textContent = "error: cek stats";
+      modeNode.title = "unbound-control gagal — lihat /stats.php untuk diagnose";
+      if (pulseNode) pulseNode.style.opacity = "0.3";
+      points.push({ value: 0, time: now });
+      if (points.length > maxPoints) points.shift();
+      drawChart();
+      return;
+    }
     if (sample.mode === "total") {
       if (lastTotal !== null && sample.value >= lastTotal) {
         value = (sample.value - lastTotal) / Math.max((now - lastTotalTime) / 1000, 1);
@@ -65,12 +78,11 @@
       lastTotal = sample.value;
       lastTotalTime = now;
     }
-
     points.push({ value: Math.max(value, 0), time: now });
     if (points.length > maxPoints) points.shift();
-
     valueNode.textContent = numberText(value);
     modeNode.textContent = label;
+    modeNode.removeAttribute("title");
     if (pulseNode) pulseNode.style.opacity = "1";
     drawChart();
   }
@@ -139,14 +151,15 @@
   }
 
   function extractBlockedStat(text) {
-    // /usr/bin/s outputs: "blacklist:     3 queries/s"
+    if (/error:|Permission denied|could not read|unbound-control tidak/i.test(text)) {
+      return { value: 0, mode: "error" };
+    }
     var blRate = text.match(/blacklist\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*queries?\/s/i);
     if (blRate) return { value: parseFloat(blRate[1]), mode: "blocked/s" };
-
-    // Fallback: raw cumulative value, with or without total. prefix.
     var blTotal = text.match(/(?:^|\n)(?:total\.)?num\.blacklist\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)/i);
     if (blTotal) return { value: parseFloat(blTotal[1]), mode: "total" };
-
+    var blThread = text.match(/thread\d+\.num\.blacklist\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)/i);
+    if (blThread) return { value: parseFloat(blThread[1]), mode: "total" };
     return { value: 0, mode: "blocked/s" };
   }
 
@@ -154,8 +167,15 @@
     var now = Date.now();
     var value = sample.value;
     var label = sample.mode;
-
-    // If cumulative total, compute delta rate
+    if (sample.mode === "error") {
+      if (blValueNode) blValueNode.textContent = "—";
+      if (blModeNode) { blModeNode.textContent = "error"; blModeNode.title = "unbound-control gagal"; }
+      if (blPulseNode) blPulseNode.style.opacity = "0.3";
+      blPoints.push({ value: 0, time: now });
+      if (blPoints.length > maxPoints) blPoints.shift();
+      drawBlockedChart();
+      return;
+    }
     if (sample.mode === "total") {
       if (lastBlocked !== null && sample.value >= lastBlocked) {
         value = (sample.value - lastBlocked) / Math.max((now - lastBlockedTime) / 1000, 1);
@@ -167,12 +187,10 @@
       lastBlocked = sample.value;
       lastBlockedTime = now;
     }
-
     blPoints.push({ value: Math.max(value, 0), time: now });
     if (blPoints.length > maxPoints) blPoints.shift();
-
     if (blValueNode) blValueNode.textContent = numberText(value);
-    if (blModeNode) blModeNode.textContent = label;
+    if (blModeNode) { blModeNode.textContent = label; blModeNode.removeAttribute("title"); }
     if (blPulseNode) blPulseNode.style.opacity = "1";
     drawBlockedChart();
   }
@@ -250,19 +268,22 @@
     request.send();
   }
 
-  // --- Hero stats (cumulative totals from Unbound) ---
   function updateHero(data) {
     var heroTotal = document.getElementById("heroTotal");
     var heroBlocked = document.getElementById("heroBlocked");
     var heroRate = document.getElementById("heroRate");
-
+    if (data.error) {
+      if (heroTotal) heroTotal.textContent = "—";
+      if (heroBlocked) heroBlocked.textContent = "—";
+      if (heroRate) { heroRate.textContent = "err"; heroRate.title = data.error; }
+      return;
+    }
     var q = data.total_queries || 0;
     var b = data.blocked_queries || 0;
     var rate = q > 0 ? ((b / q) * 100).toFixed(1) : "0.0";
-
     if (heroTotal) heroTotal.textContent = q.toLocaleString("en-US");
     if (heroBlocked) heroBlocked.textContent = b.toLocaleString("en-US");
-    if (heroRate) heroRate.textContent = rate;
+    if (heroRate) { heroRate.textContent = rate; heroRate.removeAttribute("title"); }
   }
 
   function refreshHero() {

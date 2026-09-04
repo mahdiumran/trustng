@@ -7,9 +7,10 @@ $proto = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'h
 $allowed_prefix = "$proto://$http_host/";
 $allowed_prefix_ip = "https://$myip:40443/";
 
+require_once __DIR__ . '/includes/unbound.php';
 if($_POST['do'] ?? null) {
     if ($_POST['do'] === 'flush') {
-        shell_exec('unbound-control flush_stats 2>&1');
+        tng_unbound_collect_raw('flush_stats');
         $metrics_db = '/var/lib/trustng-metrics/metrics.db';
         if (is_file($metrics_db)) {
             if (is_writable($metrics_db)) {
@@ -35,8 +36,7 @@ function statval($stats, $key) {
     if (preg_match('/^' . preg_quote($key, '/') . '=(\d+)/m', $stats, $m)) return $m[1];
     return '0';
 }
-$stats = @shell_exec("/usr/local/sbin/unbound-control stats_noreset 2>/dev/null");
-if (empty($stats)) { $stats = @shell_exec("unbound-control stats_noreset 2>/dev/null"); }
+$stats = tng_unbound_stats_raw();
 $queries   = statval($stats, 'total.num.queries');
 $blocked   = statval($stats, 'total.num.blacklist');
 $cachehits = statval($stats, 'total.num.cachehits');

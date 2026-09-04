@@ -2,39 +2,12 @@
 // Forward destination breakdown from Unbound stats
 // Returns JSON: {"Local Cache":1635027,"Resolver1 (1.1.1.1)":73993,...}
 header('Content-Type: application/json');
-
-$stats = @shell_exec("/usr/local/sbin/unbound-control stats_noreset 2>/dev/null");
-if (!$stats) {
-    $stats = @shell_exec("unbound-control stats_noreset 2>/dev/null");
-}
-
-$cachehits = 0;
-$cachemiss = 0;
-
-if ($stats) {
-    // Parse all key=value pairs
-    foreach (explode("\n", $stats) as $ln) {
-        if (preg_match('/^([^=]+)=(\d+)$/', trim($ln), $m)) {
-            $key = $m[1];
-            $val = intval($m[2]);
-            if ($key === 'num.cachehits') $cachehits = $val;
-            elseif ($key === 'num.cachemiss') $cachemiss = $val;
-            elseif ($key === 'total.num.cachehits') $cachehits = $val;
-            elseif ($key === 'total.num.cachemiss') $cachemiss = $val;
-        }
-    }
-    // Fallback: sum thread values if still zero
-    if ($cachehits === 0) {
-        if (preg_match_all('/thread\d+\.num\.cachehits\s*=\s*(\d+)/i', $stats, $matches)) {
-            foreach ($matches[1] as $v) $cachehits += intval($v);
-        }
-    }
-    if ($cachemiss === 0) {
-        if (preg_match_all('/thread\d+\.num\.cachemiss\s*=\s*(\d+)/i', $stats, $matches)) {
-            foreach ($matches[1] as $v) $cachemiss += intval($v);
-        }
-    }
-}
+error_reporting(0);
+require_once __DIR__ . '/includes/unbound.php';
+$stats = tng_unbound_stats_raw();
+$pairs = tng_unbound_stats_pairs($stats);
+$cachehits = intval($pairs['total.num.cachehits'] ?? 0);
+$cachemiss = intval($pairs['total.num.cachemiss'] ?? 0);
 
 // Read parent resolvers from resolver.data
 $resolver_data = @file_get_contents('resolver.data');

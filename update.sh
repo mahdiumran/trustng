@@ -41,6 +41,19 @@ echo "== TRUST-NG update (mode: $MODE) =="
 
 run_remote "mkdir -p $BACKUP /usr/local/sbin /usr/local/libexec /etc/unbound/db /etc/systemd/system/unbound.service.d /usr/local/etc/unbound"
 run_remote "ln -sf /etc/unbound/unbound.conf /usr/local/etc/unbound/unbound.conf 2>/dev/null || true"
+# Permission fix early (stats 0 on new deploy) — idempotent, also for binary-only mode
+run_remote '
+mkdir -p /etc/tmpfiles.d
+echo "d /etc/unbound/run 0755 unbound unbound -" > /etc/tmpfiles.d/trustng-unbound.conf
+systemd-tmpfiles --create 2>/dev/null || true
+chown unbound:unbound /etc/unbound/run /etc/unbound/db 2>/dev/null || true
+chmod 0755 /etc/unbound/run 2>/dev/null || true
+adduser www-data unbound 2>/dev/null || true
+mkdir -p /var/lib/trustng-auth /var/lib/trustng-metrics
+chown -R www-data:www-data /var/lib/trustng-auth 2>/dev/null || true
+chown -R www-data:www-data /var/lib/trustng-metrics 2>/dev/null || true
+chmod 0750 /var/lib/trustng-auth 2>/dev/null || true
+'
 
 # ---- Interface rename: ens18 → eth0 (panel expects eth0)
 run_remote 'setup_interface_rename() {
@@ -158,7 +171,7 @@ if [ "$do_web" = 1 ]; then
     fi
     run_remote "chown -R root:root $WEBROOT && find $WEBROOT -type f -name '*.sh' -exec chmod 0755 {} +"
     # Data files writable by www-data (panel runtime state)
-    run_remote "for f in $WEBROOT/*.data $WEBROOT/*.db $WEBROOT/*.ip $WEBROOT/*.count $WEBROOT/whitelist.db $WEBROOT/blacklist.local.db; do [ -f \"\$f\" ] && chown www-data:www-data \"\$f\" && chmod 0664 \"\$f\"; done 2>/dev/null || true"
+    run_remote "for f in $WEBROOT/*.data $WEBROOT/*.db $WEBROOT/*.ip $WEBROOT/*.count $WEBROOT/whitelist.db $WEBROOT/blacklist.local.db $WEBROOT/includes/unbound.php; do [ -f \"\$f\" ] && chown www-data:www-data \"\$f\" 2>/dev/null || true; [ -f \"\$f\" ] && chmod 0644 \"\$f\" 2>/dev/null || true; done; for f in $WEBROOT/*.data $WEBROOT/*.ip; do [ -f \"\$f\" ] && chmod 0664 \"\$f\" 2>/dev/null || true; done"
 
     # Fix PHP-FPM PATH if needed (ensure /usr/local/sbin is available)
     run_remote 'PHP_FPM_POOL="/etc/php/8.2/fpm/pool.d/www.conf"
@@ -216,7 +229,7 @@ if [ "$do_web_changed" = 1 ]; then
         done
     fi
     run_remote "chown -R root:root $WEBROOT && find $WEBROOT -type f -name '*.sh' -exec chmod 0755 {} +"
-    run_remote "for f in $WEBROOT/*.data $WEBROOT/*.db $WEBROOT/*.ip $WEBROOT/*.count $WEBROOT/whitelist.db $WEBROOT/blacklist.local.db; do [ -f \"\$f\" ] && chown www-data:www-data \"\$f\" && chmod 0664 \"\$f\"; done 2>/dev/null || true"
+    run_remote "for f in $WEBROOT/*.data $WEBROOT/*.db $WEBROOT/*.ip $WEBROOT/*.count $WEBROOT/whitelist.db $WEBROOT/blacklist.local.db $WEBROOT/includes/unbound.php; do [ -f \"\$f\" ] && chown www-data:www-data \"\$f\" 2>/dev/null || true; [ -f \"\$f\" ] && chmod 0644 \"\$f\" 2>/dev/null || true; done; for f in $WEBROOT/*.data $WEBROOT/*.ip; do [ -f \"\$f\" ] && chmod 0664 \"\$f\" 2>/dev/null || true; done"
 
     # Fix PHP-FPM PATH if needed
     run_remote 'PHP_FPM_POOL="/etc/php/8.2/fpm/pool.d/www.conf"
@@ -227,6 +240,61 @@ if [ "$do_web_changed" = 1 ]; then
     fi'
 
     echo "[OK] web panel updated (changed files only)"
+fi
+
+# ---- Permission fix final (deploy baru stats 0) — always run unless blocklist-only
+if [ "$MODE" != "blocklist" ]; then
+    run_remote '
+    # symlink & tmpfiles (stats 0 root cause #1 & #2)
+    mkdir -p /usr/local/etc/unbound && ln -sf /etc/unbound/unbound.conf /usr/local/etc/unbound/unbound.conf
+    mkdir -p /etc/tmpfiles.d
+    echo "d /etc/unbound/run 0755 unbound unbound -" > /etc/tmpfiles.d/trustng-unbound.conf
+    systemd-tmpfiles --create 2>/dev/null || true
+    chown unbound:unbound /etc/unbound/run /etc/unbound/db 2>/dev/null || true
+    chmod 0755 /etc/unbound/run 2>/dev/null || true
+    # socket perms & group (root cause #3)
+    chown unbound:unbound /etc/unbound/run/unbound.sock 2>/dev/null || true
+    chmod 0660 /etc/unbound/run/unbound.sock 2>/dev/null || true
+    usermod -a -G unbound www-data 2>/dev/null || adduser www-data unbound 2>/dev/null || true
+    # sudoers fallback for unbound-control (install.sh parity)
+    cat > /etc/sudoers.d/trustng-panel <<SUDO
+# TRUST-NG panel — NOPASSWD sudo rules for www-data group
+%www-data ALL=(root) NOPASSWD: /usr/sbin/service
+%www-data ALL=(root) NOPASSWD: /usr/bin/systemctl
+%www-data ALL=(root) NOPASSWD: /sbin/reboot
+%www-data ALL=(root) NOPASSWD: /usr/sbin/sysctl
+%www-data ALL=(root) NOPASSWD: /usr/sbin/ifconfig
+%www-data ALL=(root) NOPASSWD: /usr/sbin/chpasswd
+%www-data ALL=(root) NOPASSWD: /usr/bin/kill
+%www-data ALL=(root) NOPASSWD: /usr/sbin/sshd -t
+%www-data ALL=(root) NOPASSWD: /usr/sbin/nginx -t
+%www-data ALL=(root) NOPASSWD: /usr/local/sbin/unbound-control
+%www-data ALL=(root) NOPASSWD: /usr/sbin/unbound-control
+%www-data ALL=(root) NOPASSWD: /usr/bin/cp
+%www-data ALL=(root) NOPASSWD: /usr/bin/rm
+%www-data ALL=(root) NOPASSWD: /usr/bin/sed
+%www-data ALL=(root) NOPASSWD: /usr/bin/grep
+%www-data ALL=(root) NOPASSWD: /usr/bin/wc
+%www-data ALL=(root) NOPASSWD: /usr/bin/top
+%www-data ALL=(root) NOPASSWD: /usr/bin/nproc
+%www-data ALL=(root) NOPASSWD: /usr/bin/paste
+%www-data ALL=(root) NOPASSWD: /usr/bin/printf
+%www-data ALL=(root) NOPASSWD: /usr/bin/sh
+%www-data ALL=(root) NOPASSWD: /usr/bin/tee
+%www-data ALL=(root) NOPASSWD: /usr/local/sbin/repairmunin.sh
+%www-data ALL=(root) NOPASSWD: /usr/local/sbin/update-blocklist
+%www-data ALL=(root) NOPASSWD: /usr/bin/systemctl start update-blocklist
+SUDO
+    chmod 440 /etc/sudoers.d/trustng-panel; visudo -cf /etc/sudoers.d/trustng-panel 2>/dev/null || true
+    # PHP-FPM must pick up new groups + PATH
+    PHP_FPM_POOL="/etc/php/8.2/fpm/pool.d/www.conf"
+    if [ -f "$PHP_FPM_POOL" ] && grep -q "^;env\[PATH\]" "$PHP_FPM_POOL" 2>/dev/null; then
+        sed -i "s|^;env\[PATH\].*|env[PATH] = /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin|" "$PHP_FPM_POOL"
+    fi
+    systemctl restart php8.2-fpm 2>/dev/null || true
+    systemctl reload nginx 2>/dev/null || true
+    echo "[OK] permissions & PHP-FPM groups refreshed"
+    '
 fi
 
 if [ "$do_binary" = 1 ]; then
@@ -242,5 +310,5 @@ elif [ "$do_config" = 1 ]; then
     run_remote "systemctl reload unbound || systemctl restart unbound"
 fi
 
-run_remote "unbound-control status | head -3"
+run_remote "unbound-control -c /etc/unbound/unbound.conf status 2>&1 | head -3; echo "---"; sudo -u www-data unbound-control -c /etc/unbound/unbound.conf stats_noreset 2>&1 | head -3"
 echo "Update selesai."

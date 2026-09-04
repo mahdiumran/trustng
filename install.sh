@@ -376,6 +376,18 @@ if [ -f "$PHP_FPM_POOL" ]; then
         echo "[OK] PHP-FPM PATH already configured"
     fi
 fi
+# Pastikan www-data sudah di grup unbound dan fpm sudah reload groups (fix deploy baru stats 0)
+adduser www-data unbound 2>/dev/null || true
+systemctl restart php8.2-fpm 2>/dev/null || true
+# Pastikan symlink config untuk unbound-control ada (tanpa ini control cari /usr/local/etc/...)
+mkdir -p /usr/local/etc/unbound
+ln -sf /etc/unbound/unbound.conf /usr/local/etc/unbound/unbound.conf
+# Pastikan socket dir survive reboot
+mkdir -p /etc/tmpfiles.d
+echo 'd /etc/unbound/run 0755 unbound unbound -' > /etc/tmpfiles.d/trustng-unbound.conf
+systemd-tmpfiles --create 2>/dev/null || true
+chown unbound:unbound /etc/unbound/run 2>/dev/null || true
+chmod 0755 /etc/unbound/run 2>/dev/null || true
 
 # ---- 15. Munin auth endpoint (skip if already copied from repo)
 if [ ! -f "$WEBROOT/munin_auth.php" ]; then
@@ -408,6 +420,10 @@ cat > /etc/sudoers.d/trustng-panel <<'EOF'
 %www-data ALL=(root) NOPASSWD: /usr/bin/kill
 %www-data ALL=(root) NOPASSWD: /usr/sbin/sshd -t
 %www-data ALL=(root) NOPASSWD: /usr/sbin/nginx -t
+
+# Unbound control — untuk stats fallback saat socket perms bermasalah di deploy baru
+%www-data ALL=(root) NOPASSWD: /usr/local/sbin/unbound-control
+%www-data ALL=(root) NOPASSWD: /usr/sbin/unbound-control
 
 # File operations
 %www-data ALL=(root) NOPASSWD: /usr/bin/cp

@@ -31,7 +31,15 @@ function stToggleRaw() {
 function stRefresh() {
   $('#st-cards').addClass('di-loading');
   $.getJSON('stats_data.php', function (data) {
-    if (data && data.ok) { stRender(data); }
+    if (data) {
+      if (data.ok) stRender(data);
+      else if (data.error) {
+        $('#st-cards').html('<div class="di-card" style="grid-column:1/-1;border-left:3px solid #ff4d6d;padding:12px;color:#ffb3c0">'
+          + $('<div>').text('Unbound stats error: ' + data.error).html()
+          + '<br><small>Hints: sock /etc/unbound/run/unbound.sock, groups www-data, symlink /usr/local/etc/unbound/unbound.conf</small></div>');
+        if (data.raw) $('#stats-raw').text(data.raw);
+      }
+    }
   }, 'json')
   .fail(function () { /* keep last good values */ })
   .always(function () { $('#st-cards').removeClass('di-loading'); });

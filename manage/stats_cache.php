@@ -1,44 +1,15 @@
 <?php
-// Cache performance breakdown from Unbound stats
-// Returns JSON: {"Cache Hits":1635027,"Cache Miss":73993}
+// Cache performance breakdown — via resilient helper
 header('Content-Type: application/json');
-
-$stats = @shell_exec("/usr/local/sbin/unbound-control stats_noreset 2>/dev/null");
-if (!$stats) {
-    $stats = @shell_exec("unbound-control stats_noreset 2>/dev/null");
-}
-
-$cachehits = 0;
-$cachemiss = 0;
-
-if ($stats) {
-    // Parse all key=value pairs
-    foreach (explode("\n", $stats) as $ln) {
-        if (preg_match('/^([^=]+)=(\d+)$/', trim($ln), $m)) {
-            $key = $m[1];
-            $val = intval($m[2]);
-            if ($key === 'num.cachehits') $cachehits = $val;
-            elseif ($key === 'num.cachemiss') $cachemiss = $val;
-            elseif ($key === 'total.num.cachehits') $cachehits = $val;
-            elseif ($key === 'total.num.cachemiss') $cachemiss = $val;
-        }
-    }
-    // Fallback: sum thread values if still zero
-    if ($cachehits === 0) {
-        if (preg_match_all('/thread\d+\.num\.cachehits\s*=\s*(\d+)/i', $stats, $matches)) {
-            foreach ($matches[1] as $v) $cachehits += intval($v);
-        }
-    }
-    if ($cachemiss === 0) {
-        if (preg_match_all('/thread\d+\.num\.cachemiss\s*=\s*(\d+)/i', $stats, $matches)) {
-            foreach ($matches[1] as $v) $cachemiss += intval($v);
-        }
-    }
-}
-
+error_reporting(0);
+require_once __DIR__ . '/includes/unbound.php';
+$stats = tng_unbound_stats_raw();
+$pairs = tng_unbound_stats_pairs($stats);
+$cachehits = intval($pairs['total.num.cachehits'] ?? 0);
+$cachemiss = intval($pairs['total.num.cachemiss'] ?? 0);
 $result = array();
 if ($cachehits > 0) $result['Cache Hits'] = $cachehits;
 if ($cachemiss > 0) $result['Cache Miss'] = $cachemiss;
-
+if (empty($result) && ($stats === '' || preg_match('/^error:|^could not/i', trim($stats)))) $result['_error'] = $stats ?: 'unbound-control tidak merespon';
 echo json_encode($result);
 ?>

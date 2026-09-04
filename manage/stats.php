@@ -14,33 +14,10 @@ if (strpos($referer, $allowed_prefix) !== 0 && strpos($referer, $allowed_prefix_
 $ipaddr = shell_exec("ifconfig eth0 2>/dev/null | grep netmask | sed 's/ .*inet //;s/ .*//'");
 $ipaddr = $ipaddr !== null ? trim($ipaddr) : '';
 
-function collect_stats() {
-    $out = @shell_exec("/usr/local/sbin/unbound-control stats_noreset 2>/dev/null");
-    if (!$out) $out = @shell_exec("unbound-control stats_noreset 2>/dev/null");
-    return $out ?: '';
-}
-
-$raw = trim(collect_stats());
-$pairs = array();
-foreach (explode("\n", $raw) as $ln) {
-    if (preg_match('/^([^=]+)=(.*)$/', $ln, $m)) { $pairs[trim($m[1])] = trim($m[2]); }
-}
-$derive = array('num.queries','num.blacklist','num.cachehits','num.cachemiss','num.recursivereplies','num.prefetch');
-foreach ($derive as $suf) {
-    if (!isset($pairs['total.' . $suf])) {
-        // Try top-level key first (e.g. num.queries)
-        if (isset($pairs[$suf])) {
-            $pairs['total.' . $suf] = $pairs[$suf];
-        } else {
-            // Fallback: sum thread values
-            $sum = 0; $found = false;
-            foreach ($pairs as $k => $v) {
-                if (preg_match('/^thread\d+\.' . preg_quote($suf, '/') . '$/', $k)) { $sum += (float)$v; $found = true; }
-            }
-            if ($found) $pairs['total.' . $suf] = (string)$sum;
-        }
-    }
-}
+require_once __DIR__ . '/includes/unbound.php';
+$raw = trim(tng_unbound_stats_raw());
+$pairs = tng_unbound_stats_pairs($raw);
+$pairs['_raw_error'] = ($raw === '' || preg_match('/^error:|^could not/i', trim($raw))) ? ($raw ?: 'unbound-control tidak merespon') : '';
 $st = function($k, $d = '0') { global $pairs; return isset($pairs[$k]) ? $pairs[$k] : $d; };
 
 $highlights = array(
@@ -85,6 +62,9 @@ foreach ($highlights as $h) {
     <div class="tng-stat-head"><span class="tng-stat-icon"><i class="' . $h[2] . '"></i></span><span class="tng-stat-name">' . $h[0] . '</span></div>
     <div class="tng-stat-value">' . $val . '</div>
   </div>';
+}
+if ($pairs['_raw_error'] !== '') {
+  echo '<div class="di-card" style="border-left:3px solid #ff4d6d"><div class="di-head"><span class="di-title" style="color:#ff8fa0"><i class="fa-solid fa-triangle-exclamation"></i> Unbound stats error</span></div><pre class="st-raw" style="color:#ffb3c0;white-space:pre-wrap">'.htmlspecialchars($pairs['_raw_error'], ENT_QUOTES, 'UTF-8')."\nHints: cek sock /etc/unbound/run/unbound.sock, groups www-data, symlink /usr/local/etc/unbound/unbound.conf</pre></div>";
 }
 echo '</div>
 
