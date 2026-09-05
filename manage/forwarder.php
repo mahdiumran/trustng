@@ -34,8 +34,8 @@ if($_POST['parentfwd'] ?? null) {
     $res6 = $_POST['res6'] ?? '';
     trustng_state_write('resolver.data', "$res1,$res2,$res3,$res4,$res5,$res6");
     if ( $res1 == '' && $res2 == '' && $res3 == '' && $res4 == '' && $res5 == '' && $res6 == '') {
-        $file = fopen('/etc/unbound/parent.conf', 'w');
-        if ($file) { fwrite($file, ''); fclose($file); }
+        // clear parent.conf via sudo (www-data cannot write /etc/unbound directly)
+        shell_exec('sudo -n sh -c ' . escapeshellarg('truncate -c -s 0 /etc/unbound/parent.conf; chown unbound:unbound /etc/unbound/parent.conf 2>/dev/null || true'));
     } else {
         trustng_run_panel_script('setresolver.sh');
     }

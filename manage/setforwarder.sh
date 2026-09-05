@@ -12,3 +12,4 @@ while read line; do
         if [ "$dns3" != '' ]; then printf "\tforward-addr: \"$dns3\"\n" >> /etc/unbound/forwarder.conf; fi
     fi
 done < /var/www/manage/forwarder.data
+chown unbound:unbound /etc/unbound/forwarder.conf 2>/dev/null || true

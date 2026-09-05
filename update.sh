@@ -169,9 +169,9 @@ if [ "$do_web" = 1 ]; then
             install -m 0644 "$source" "$destination"
         done
     fi
-    run_remote "chown root:root $WEBROOT; chmod 0755 $WEBROOT; find $WEBROOT -type d -exec chmod 0755 {} + 2>/dev/null; find $WEBROOT -type f -exec chmod 0644 {} + 2>/dev/null; find $WEBROOT -type f -name '*.sh' -exec chmod 0755 {} + 2>/dev/null; chown -R root:root $WEBROOT"
+    run_remote "chown root:www-data $WEBROOT; chmod 0775 $WEBROOT; find $WEBROOT -type d -exec chgrp www-data {} + 2>/dev/null \; -exec chmod 0775 {} + 2>/dev/null \; || true; find $WEBROOT -type f -exec chmod 0644 {} + 2>/dev/null; find $WEBROOT -type f -name '*.sh' -exec chmod 0755 {} + 2>/dev/null; chown -R root:www-data $WEBROOT 2>/dev/null || true; chgrp -R www-data $WEBROOT 2>/dev/null || true"
     # Data files writable by www-data (panel runtime state)
-    run_remote "for f in $WEBROOT/*.data $WEBROOT/*.db $WEBROOT/*.ip $WEBROOT/*.count $WEBROOT/whitelist.db $WEBROOT/blacklist.local.db $WEBROOT/includes/unbound.php; do [ -f \"\$f\" ] && chown www-data:www-data \"\$f\" 2>/dev/null || true; [ -f \"\$f\" ] && chmod 0644 \"\$f\" 2>/dev/null || true; done; for f in $WEBROOT/*.data $WEBROOT/*.ip; do [ -f \"\$f\" ] && chmod 0664 \"\$f\" 2>/dev/null || true; done"
+    run_remote "for f in $WEBROOT/*.data $WEBROOT/*.db $WEBROOT/*.ip $WEBROOT/*.count $WEBROOT/whitelist.db $WEBROOT/blacklist.local.db $WEBROOT/includes/unbound.php; do [ -f \"\$f\" ] && chown www-data:www-data \"\$f\" 2>/dev/null || true; [ -f \"\$f\" ] && chmod 0664 \"\$f\" 2>/dev/null || true; done; for f in $WEBROOT/*.data $WEBROOT/*.ip; do [ -f \"\$f\" ] && chmod 0664 \"\$f\" 2>/dev/null || true; done"
 
     # Fix PHP-FPM PATH if needed (ensure /usr/local/sbin is available)
     run_remote 'PHP_FPM_POOL="/etc/php/8.2/fpm/pool.d/www.conf"
@@ -228,7 +228,7 @@ if [ "$do_web_changed" = 1 ]; then
             fi
         done
     fi
-    run_remote "chown root:root $WEBROOT; chmod 0755 $WEBROOT; find $WEBROOT -type d -exec chmod 0755 {} + 2>/dev/null; find $WEBROOT -type f -exec chmod 0644 {} + 2>/dev/null; find $WEBROOT -type f -name '*.sh' -exec chmod 0755 {} + 2>/dev/null; chown -R root:root $WEBROOT"
+    run_remote "chown root:www-data $WEBROOT; chmod 0775 $WEBROOT; find $WEBROOT -type d -exec chgrp www-data {} + 2>/dev/null \; -exec chmod 0775 {} + 2>/dev/null \; || true; find $WEBROOT -type f -exec chmod 0644 {} + 2>/dev/null; find $WEBROOT -type f -name '*.sh' -exec chmod 0755 {} + 2>/dev/null; chown -R root:www-data $WEBROOT 2>/dev/null || true; chgrp -R www-data $WEBROOT 2>/dev/null || true"
     run_remote "for f in $WEBROOT/*.data $WEBROOT/*.db $WEBROOT/*.ip $WEBROOT/*.count $WEBROOT/whitelist.db $WEBROOT/blacklist.local.db $WEBROOT/includes/unbound.php; do [ -f \"\$f\" ] && chown www-data:www-data \"\$f\" 2>/dev/null || true; [ -f \"\$f\" ] && chmod 0644 \"\$f\" 2>/dev/null || true; done; for f in $WEBROOT/*.data $WEBROOT/*.ip; do [ -f \"\$f\" ] && chmod 0664 \"\$f\" 2>/dev/null || true; done"
 
     # Fix PHP-FPM PATH if needed
@@ -246,7 +246,7 @@ fi
 if [ "$MODE" != "blocklist" ]; then
     run_remote '
      install -d -o unbound -g unbound -m 0755 /var/lib/unbound /etc/unbound/key 2>/dev/null || mkdir -p /var/lib/unbound /etc/unbound/key; chown unbound:unbound /var/lib/unbound /etc/unbound/key 2>/dev/null || true
-    is_bad() { [ ! -s "$1" ] || [ "$(wc -c <"$1" 2>/dev/null)" -lt 500 ] || ! grep -q "IN DS" "$1" 2>/dev/null; }
+    is_bad() { [ ! -s "$1" ] || [ "$(wc -c <"$1" 2>/dev/null)" -lt 500 ] || ! grep -q "20326" "$1" 2>/dev/null; }
     if is_bad /etc/unbound/key/root.key; then
         /usr/local/sbin/unbound-anchor -a /etc/unbound/key/root.key 2>/dev/null || unbound-anchor -a /etc/unbound/key/root.key 2>/dev/null || true
         is_bad /etc/unbound/key/root.key && cp -f /var/lib/unbound/root.key /etc/unbound/key/root.key 2>/dev/null || true

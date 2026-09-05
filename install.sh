@@ -203,8 +203,8 @@ install -d -o unbound -g unbound -m 0755 /etc/unbound/key
 
 # Generate root.key using unbound-anchor (required by unbound-checkconf)
 # unbound.conf uses /etc/unbound/key/root.key but unit ExecStartPre uses /var/lib/unbound/root.key — ensure BOTH exist
-# treat <100 bytes as corrupt (prod showed 83 bytes → SERVFAIL DNSSEC)
-is_bad_anchor() { [ ! -s "$1" ] || [ "$(wc -c <"$1" 2>/dev/null)" -lt 500 ] || ! grep -q "IN DS" "$1" 2>/dev/null; }
+# detect corrupt: prod showed 83 bytes DS truncated vs valid 1249 bytes autotrust (DNSKEY)
+is_bad_anchor() { [ ! -s "$1" ] || [ "$(wc -c <"$1" 2>/dev/null)" -lt 500 ] || ! grep -q "20326" "$1" 2>/dev/null; }
 if is_bad_anchor /etc/unbound/key/root.key; then
     # Install unbound-anchor if missing
     command -v unbound-anchor >/dev/null 2>&1 || apt-get install -y -qq unbound-anchor 2>/dev/null || true
@@ -213,25 +213,31 @@ if is_bad_anchor /etc/unbound/key/root.key; then
     if command -v unbound-anchor >/dev/null 2>&1; then
         unbound-anchor -a /etc/unbound/key/root.key 2>/dev/null || true
     fi
-    # Fallback: copy from system locations
-    [ -s /etc/unbound/key/root.key ] || cp -f /var/lib/unbound/root.key /etc/unbound/key/root.key 2>/dev/null || true
-    [ -s /etc/unbound/key/root.key ] || cp -f /usr/share/dns/root.key /etc/unbound/key/root.key 2>/dev/null || true
-    # Final fallback: minimal valid trust anchor
-    [ -s /etc/unbound/key/root.key ] || cat > /etc/unbound/key/root.key <<'KEY'
+    # Fallback: copy from good location if still bad
+    is_bad_anchor /etc/unbound/key/root.key && cp -f /var/lib/unbound/root.key /etc/unbound/key/root.key 2>/dev/null || true
+    is_bad_anchor /etc/unbound/key/root.key && cp -f /usr/share/dns/root.key /etc/unbound/key/root.key 2>/dev/null || true
+    # Final fallback: minimal valid trust anchor (regenerate full via anchor if possible)
+    if is_bad_anchor /etc/unbound/key/root.key; then
+        /usr/local/sbin/unbound-anchor -a /etc/unbound/key/root.key 2>/dev/null || unbound-anchor -a /etc/unbound/key/root.key 2>/dev/null || true
+        is_bad_anchor /etc/unbound/key/root.key && cat > /etc/unbound/key/root.key <<'KEY'
 . IN DS 20326 8 2 683D2D0ACB5C2EED8C6783AFA516D0BE8A937AC3504823D56FA7010615E84B1C
 KEY
+    fi
     chown unbound:unbound /etc/unbound/key/root.key
     chmod 0644 /etc/unbound/key/root.key
+    is_bad_anchor /etc/unbound/key/root.key && echo "[WARN] /etc/unbound/key/root.key masih corrupt setelah generate" >&2 || echo "[OK] /etc/unbound/key/root.key OK ($(wc -c < /etc/unbound/key/root.key) bytes)"
 fi
 # Ensure /var/lib/unbound/root.key exists (unit ExecStartPre needs it; missing → silent start failure)
 if is_bad_anchor /var/lib/unbound/root.key; then
-    cp -f /etc/unbound/key/root.key /var/lib/unbound/root.key 2>/dev/null || true
-    [ -s /var/lib/unbound/root.key ] || /usr/local/sbin/unbound-anchor -a /var/lib/unbound/root.key 2>/dev/null || true
-    [ -s /var/lib/unbound/root.key ] || unbound-anchor -a /var/lib/unbound/root.key 2>/dev/null || true
-    [ -s /var/lib/unbound/root.key ] || cp -f /usr/share/dns/root.key /var/lib/unbound/root.key 2>/dev/null || true
-    [ -s /var/lib/unbound/root.key ] || cat > /var/lib/unbound/root.key <<'KEY2'
+    is_bad_anchor /var/lib/unbound/root.key && cp -f /etc/unbound/key/root.key /var/lib/unbound/root.key 2>/dev/null || true
+    is_bad_anchor /var/lib/unbound/root.key && /usr/local/sbin/unbound-anchor -a /var/lib/unbound/root.key 2>/dev/null || true
+    is_bad_anchor /var/lib/unbound/root.key && unbound-anchor -a /var/lib/unbound/root.key 2>/dev/null || true
+    is_bad_anchor /var/lib/unbound/root.key && cp -f /usr/share/dns/root.key /var/lib/unbound/root.key 2>/dev/null || true
+    if is_bad_anchor /var/lib/unbound/root.key; then
+        cat > /var/lib/unbound/root.key <<'KEY2'
 . IN DS 20326 8 2 683D2D0ACB5C2EED8C6783AFA516D0BE8A937AC3504823D56FA7010615E84B1C
 KEY2
+    fi
     chown unbound:unbound /var/lib/unbound/root.key 2>/dev/null || true
     chmod 0644 /var/lib/unbound/root.key 2>/dev/null || true
     echo "[OK] /var/lib/unbound/root.key ensured (copied/generated)"
@@ -277,13 +283,14 @@ while IFS= read -r -d '' source; do
 done < <(find "$DEPLOY_DIR/manage" -type f -print0)
 
 # Set permission untuk /var/www/manage dan directory di dalamnya (struktur rapi prod)
-chown root:root "$WEBROOT"
-chmod 0755 "$WEBROOT"
-# Direktori di dalam WEBROOT harus 0755, file 0644 (kecuali .sh 0755)
-find "$WEBROOT" -type d -exec chmod 0755 {} + 2>/dev/null || true
+# Dir harus 0775 root:www-data agar www-data bisa tempnam+rename via state_store.php (atomic write)
+chown root:www-data "$WEBROOT"
+chmod 0775 "$WEBROOT"
+find "$WEBROOT" -type d -exec chgrp www-data {} + 2>/dev/null \; -exec chmod 0775 {} + 2>/dev/null \; || true
 find "$WEBROOT" -type f -exec chmod 0644 {} + 2>/dev/null || true
 find "$WEBROOT" -type f -name '*.sh' -exec chmod 0755 {} + 2>/dev/null || true
-chown -R root:root "$WEBROOT"
+chown -R root:www-data "$WEBROOT" 2>/dev/null || chown -R root:root "$WEBROOT"
+chgrp -R www-data "$WEBROOT" 2>/dev/null || true
 
 # Panel runtime state
 for name in forwarder.data resolver.data hosts.data hosts6.data ipaddr.data ip6addr.data ipalias.data ipalias6.data owner.data clients.ip clients6.ip whitelist.db blacklist.local.db lp1.ip lp2.ip lp3.ip lp4.ip lp5.ip lp6.ip setsafesearch settproxy setdnssec setsnmpd setip6 ip6auto ssh.port ssl.port snmpd.community; do
@@ -604,8 +611,8 @@ CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT);"
     }
 fi
 
-# ---- 20. Health checks
-T=$(head -n1 /etc/unbound/db/trust.txt 2>/dev/null || true)
+# ---- 20. Health checks (skip leading '-' domains like -slot-77..., use first valid)
+T=$(grep -m1 -E '^[a-z0-9]' /etc/unbound/db/trust.txt 2>/dev/null || head -n1 /etc/unbound/db/trust.txt 2>/dev/null || true)
 [ -n "$T" ] && ANS=$(dig +short +time=3 "@127.0.0.1" "$T" A | head -n1) && [ -n "$ANS" ] && echo "[HEALTH] blokir $T -> $ANS"
 dig +short +time=3 "@127.0.0.1" example.com A | grep -q . && echo "[HEALTH] resolusi normal OK"
 

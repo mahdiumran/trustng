@@ -68,5 +68,6 @@ function trustng_state_promote($pendingName, $activeName)
 function trustng_run_panel_script($name)
 {
     $path = trustng_state_path($name);
-    return shell_exec('sh ' . escapeshellarg($path));
+    // panel runs as www-data, scripts write to /etc/unbound/* → need sudo (NOPASSWD /usr/bin/sh)
+    return shell_exec('sudo -n sh ' . escapeshellarg($path) . ' 2>&1');
 }

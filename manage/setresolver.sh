@@ -14,3 +14,4 @@ if [ "$res3" != '' ]; then printf "\tforward-addr: \"$res3\"\n" >> /etc/unbound/
 if [ "$res4" != '' ]; then printf "\tforward-addr: \"$res4\"\n" >> /etc/unbound/parent.conf; fi
 if [ "$res5" != '' ]; then printf "\tforward-addr: \"$res5\"\n" >> /etc/unbound/parent.conf; fi
 if [ "$res6" != '' ]; then printf "\tforward-addr: \"$res6\"\n" >> /etc/unbound/parent.conf; fi
+chown unbound:unbound /etc/unbound/parent.conf 2>/dev/null || true
