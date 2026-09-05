@@ -169,7 +169,7 @@ if [ "$do_web" = 1 ]; then
             install -m 0644 "$source" "$destination"
         done
     fi
-    run_remote "chown -R root:root $WEBROOT && find $WEBROOT -type f -name '*.sh' -exec chmod 0755 {} +"
+    run_remote "chown root:root $WEBROOT; chmod 0755 $WEBROOT; find $WEBROOT -type d -exec chmod 0755 {} + 2>/dev/null; find $WEBROOT -type f -exec chmod 0644 {} + 2>/dev/null; find $WEBROOT -type f -name '*.sh' -exec chmod 0755 {} + 2>/dev/null; chown -R root:root $WEBROOT"
     # Data files writable by www-data (panel runtime state)
     run_remote "for f in $WEBROOT/*.data $WEBROOT/*.db $WEBROOT/*.ip $WEBROOT/*.count $WEBROOT/whitelist.db $WEBROOT/blacklist.local.db $WEBROOT/includes/unbound.php; do [ -f \"\$f\" ] && chown www-data:www-data \"\$f\" 2>/dev/null || true; [ -f \"\$f\" ] && chmod 0644 \"\$f\" 2>/dev/null || true; done; for f in $WEBROOT/*.data $WEBROOT/*.ip; do [ -f \"\$f\" ] && chmod 0664 \"\$f\" 2>/dev/null || true; done"
 
@@ -228,7 +228,7 @@ if [ "$do_web_changed" = 1 ]; then
             fi
         done
     fi
-    run_remote "chown -R root:root $WEBROOT && find $WEBROOT -type f -name '*.sh' -exec chmod 0755 {} +"
+    run_remote "chown root:root $WEBROOT; chmod 0755 $WEBROOT; find $WEBROOT -type d -exec chmod 0755 {} + 2>/dev/null; find $WEBROOT -type f -exec chmod 0644 {} + 2>/dev/null; find $WEBROOT -type f -name '*.sh' -exec chmod 0755 {} + 2>/dev/null; chown -R root:root $WEBROOT"
     run_remote "for f in $WEBROOT/*.data $WEBROOT/*.db $WEBROOT/*.ip $WEBROOT/*.count $WEBROOT/whitelist.db $WEBROOT/blacklist.local.db $WEBROOT/includes/unbound.php; do [ -f \"\$f\" ] && chown www-data:www-data \"\$f\" 2>/dev/null || true; [ -f \"\$f\" ] && chmod 0644 \"\$f\" 2>/dev/null || true; done; for f in $WEBROOT/*.data $WEBROOT/*.ip; do [ -f \"\$f\" ] && chmod 0664 \"\$f\" 2>/dev/null || true; done"
 
     # Fix PHP-FPM PATH if needed
@@ -242,7 +242,30 @@ if [ "$do_web_changed" = 1 ]; then
     echo "[OK] web panel updated (changed files only)"
 fi
 
-# ---- Permission fix final (deploy baru stats 0) — always run unless blocklist-only
+# ---- Trust anchor fix (/var/lib/unbound/root.key missing on fresh deploy)
+if [ "$MODE" != "blocklist" ]; then
+    run_remote '
+    install -d -o unbound -g unbound -m 0755 /var/lib/unbound /etc/unbound/key 2>/dev/null || mkdir -p /var/lib/unbound /etc/unbound/key; chown unbound:unbound /var/lib/unbound /etc/unbound/key 2>/dev/null || true
+    if [ ! -s /etc/unbound/key/root.key ]; then
+        unbound-anchor -a /etc/unbound/key/root.key 2>/dev/null || /usr/local/sbin/unbound-anchor -a /etc/unbound/key/root.key 2>/dev/null || true
+        [ -s /etc/unbound/key/root.key ] || cp -f /var/lib/unbound/root.key /etc/unbound/key/root.key 2>/dev/null || true
+        [ -s /etc/unbound/key/root.key ] || cp -f /usr/share/dns/root.key /etc/unbound/key/root.key 2>/dev/null || true
+        [ -s /etc/unbound/key/root.key ] || printf ". IN DS 20326 8 2 683D2D0ACB5C2EED8C6783AFA516D0BE8A937AC3504823D56FA7010615E84B1C\n" > /etc/unbound/key/root.key
+        chown unbound:unbound /etc/unbound/key/root.key 2>/dev/null || true; chmod 0644 /etc/unbound/key/root.key 2>/dev/null || true
+    fi
+    if [ ! -s /var/lib/unbound/root.key ]; then
+        cp -f /etc/unbound/key/root.key /var/lib/unbound/root.key 2>/dev/null || true
+        [ -s /var/lib/unbound/root.key ] || unbound-anchor -a /var/lib/unbound/root.key 2>/dev/null || /usr/local/sbin/unbound-anchor -a /var/lib/unbound/root.key 2>/dev/null || true
+        [ -s /var/lib/unbound/root.key ] || cp -f /usr/share/dns/root.key /var/lib/unbound/root.key 2>/dev/null || true
+        [ -s /var/lib/unbound/root.key ] || printf ". IN DS 20326 8 2 683D2D0ACB5C2EED8C6783AFA516D0BE8A937AC3504823D56FA7010615E84B1C\n" > /var/lib/unbound/root.key
+        chown unbound:unbound /var/lib/unbound/root.key 2>/dev/null || true; chmod 0644 /var/lib/unbound/root.key 2>/dev/null || true
+        echo "[OK] /var/lib/unbound/root.key ensured"
+    fi
+    cmp -s /etc/unbound/key/root.key /var/lib/unbound/root.key 2>/dev/null || cp -f /etc/unbound/key/root.key /var/lib/unbound/root.key 2>/dev/null || true
+    '
+fi
+
+# ---- Permission fix final (deploy baru stats 0 + munin) — always run unless blocklist-only
 if [ "$MODE" != "blocklist" ]; then
     run_remote '
     # symlink & tmpfiles (stats 0 root cause #1 & #2)
@@ -252,10 +275,21 @@ if [ "$MODE" != "blocklist" ]; then
     systemd-tmpfiles --create 2>/dev/null || true
     chown unbound:unbound /etc/unbound/run /etc/unbound/db 2>/dev/null || true
     chmod 0755 /etc/unbound/run 2>/dev/null || true
-    # socket perms & group (root cause #3)
+    # socket perms & group (root cause #3) — panel + munin
     chown unbound:unbound /etc/unbound/run/unbound.sock 2>/dev/null || true
     chmod 0660 /etc/unbound/run/unbound.sock 2>/dev/null || true
     usermod -a -G unbound www-data 2>/dev/null || adduser www-data unbound 2>/dev/null || true
+    adduser munin unbound 2>/dev/null || true
+    usermod -a -G unbound munin 2>/dev/null || true
+    usermod -a -G unbound nobody 2>/dev/null || true
+    cat > /etc/munin/plugin-conf.d/zzz-unbound <<MUNINCONF
+[unbound*]
+user root
+env.unbound_conf /etc/unbound/unbound.conf
+env.unbound_control /usr/local/sbin/unbound-control
+MUNINCONF
+    chmod 0644 /etc/munin/plugin-conf.d/zzz-unbound
+    systemctl restart munin-node 2>/dev/null || true
     # sudoers fallback for unbound-control (install.sh parity)
     cat > /etc/sudoers.d/trustng-panel <<SUDO
 # TRUST-NG panel — NOPASSWD sudo rules for www-data group

@@ -15,9 +15,14 @@ apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     nginx php8.2-fpm php-sqlite3 php8.2-cli dos2unix \
     curl dnsutils python3 systemd openssl adduser passwd sqlite3 \
-    libevent-2.1-7 libevent-core libevent-dev \
+    libevent-2.1-7 libevent-dev \
     munin munin-node \
-    || echo "[WARN] Some packages failed — check output above"
+    || {
+        echo "[WARN] Bulk install gagal — coba per-package"
+        for p in nginx php8.2-fpm php-sqlite3 php8.2-cli dos2unix curl dnsutils python3 sqlite3 libevent-2.1-7 libevent-dev munin munin-node openssl adduser passwd; do
+            dpkg -s "$p" >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$p" 2>&1 | tail -n 3 || echo "[WARN] $p gagal"
+        done
+    }
 
 # nftables — needed for DNS firewall (silent-drop port 53 for non-clients)
 apt-get install -y -qq nftables || echo "[WARN] nftables install failed — firewall rules will not be applied"
@@ -25,11 +30,79 @@ apt-get install -y -qq nftables || echo "[WARN] nftables install failed — fire
 # Ensure /usr/sbin is in PATH (useradd, adduser, nft live here)
 export PATH="/usr/sbin:/sbin:$PATH"
 
-# ---- 2. Dependency check (after packages installed)
-for cmd in curl dig python3 systemctl openssl php useradd; do
-    command -v $cmd >/dev/null 2>&1 || { echo "ERROR: '$cmd' tidak ada setelah install. Coba install manual: apt install <package>" >&2; exit 1; }
+# ---- 2. Dependency check — auto-install jika belum ada (agar ./install.sh langsung lengkap)
+ensure_pkg() {
+    local pkg="$1"
+    if dpkg -s "$pkg" >/dev/null 2>&1; then return 0; fi
+    echo "[INFO] Installing $pkg..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$pkg" 2>&1 | tail -n 5 || true
+    dpkg -s "$pkg" >/dev/null 2>&1 && echo "[OK] $pkg terinstall" && return 0
+    echo "[WARN] $pkg gagal terinstall — coba manual: apt install $pkg" >&2
+    return 1
+}
+# Map command -> package (Debian 12/13: php-fpm bisa 8.2 atau generic)
+MISSING=""
+for cmd in curl dig python3 systemctl openssl php useradd nginx php-fpm sqlite3; do
+    if [ "$cmd" = "php-fpm" ]; then
+        command -v php-fpm8.2 >/dev/null 2>&1 || command -v php-fpm >/dev/null 2>&1 || MISSING="$MISSING php-fpm"
+        continue
+    fi
+    if [ "$cmd" = "php" ]; then
+        command -v php >/dev/null 2>&1 || MISSING="$MISSING php"
+        continue
+    fi
+    command -v $cmd >/dev/null 2>&1 || MISSING="$MISSING $cmd"
 done
-echo "[OK] Semua dependencies terinstall"
+# dev libs tidak punya binary — cek via dpkg
+for pkg in libevent-dev sqlite3; do
+    dpkg -s "$pkg" >/dev/null 2>&1 || MISSING="$MISSING $pkg"
+done
+if [ -n "$MISSING" ]; then
+    echo "[INFO] Dependencies belum lengkap:$MISSING — install otomatis..."
+    # pkg mapping
+    for need in $MISSING; do
+        case "$need" in
+            curl) ensure_pkg curl ;;
+            dig) ensure_pkg dnsutils ;;
+            python3) ensure_pkg python3 ;;
+            systemctl) ensure_pkg systemd ;;
+            openssl) ensure_pkg openssl ;;
+            php) ensure_pkg php8.2-cli; dpkg -s php8.2-cli >/dev/null 2>&1 || ensure_pkg php-cli ;;
+            useradd) ensure_pkg passwd; ensure_pkg adduser ;;
+            nginx) ensure_pkg nginx ;;
+            php-fpm) ensure_pkg php8.2-fpm || ensure_pkg php-fpm ;;
+            sqlite3) ensure_pkg sqlite3; ensure_pkg php8.2-sqlite3 2>/dev/null || ensure_pkg php-sqlite3 ;;
+            libevent-dev) ensure_pkg libevent-dev; ensure_pkg libevent-2.1-dev 2>/dev/null || true; ensure_pkg libevent-core-2.1-7 2>/dev/null || true ;;
+        esac
+    done
+    # re-check
+    STILL=""
+    for cmd in curl dig python3 systemctl openssl php useradd nginx php-fpm sqlite3; do
+        if [ "$cmd" = "php-fpm" ]; then command -v php-fpm8.2 >/dev/null 2>&1 || command -v php-fpm >/dev/null 2>&1 || STILL="$STILL php-fpm8.2"; continue; fi
+        if [ "$cmd" = "php" ]; then command -v php >/dev/null 2>&1 || STILL="$STILL php"; continue; fi
+        if [ "$cmd" = "sqlite3" ]; then command -v sqlite3 >/dev/null 2>&1 || STILL="$STILL sqlite3"; continue; fi
+        command -v $cmd >/dev/null 2>&1 || STILL="$STILL $cmd"
+    done
+    for pkg in libevent-dev; do dpkg -s "$pkg" >/dev/null 2>&1 || STILL="$STILL $pkg"; done
+    if [ -n "$STILL" ]; then
+        echo "ERROR: dependencies tetap belum terinstall:$STILL — install manual lalu ulangi ./install.sh" >&2
+        exit 1
+    fi
+fi
+# munin optional — auto-install juga agar munin.conf line 279 tidak not found, tapi tidak fatal
+for pkg in munin munin-node; do
+    if ! dpkg -s $pkg >/dev/null 2>&1; then
+        echo "[INFO] Installing $pkg (optional, untuk graph)..."
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $pkg 2>&1 | tail -n 5 || true
+        dpkg -s $pkg >/dev/null 2>&1 && echo "[OK] $pkg terinstall" || echo "[WARN] $pkg tetap tidak terinstall — lanjut tanpa munin (graph kosong)" >&2
+    fi
+done
+# nftables juga auto-install jika nft belum ada
+if ! command -v nft >/dev/null 2>&1; then
+    echo "[INFO] Installing nftables..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nftables 2>&1 | tail -n 5 || echo "[WARN] nftables gagal — firewall DNS skip" >&2
+fi
+echo "[OK] Semua dependencies terinstall (core + munin optional)"
 
 # ---- 3. Bundel artifacts check
 required="bin/unbound bin/unbound-checkconf bin/unbound-control scripts/create_domain_cdb.py scripts/update-blocklist conf/unbound.conf conf/sources.txt conf/nftables.conf"
@@ -125,8 +198,11 @@ install -m 0755 "$DEPLOY_DIR/scripts/update-blocklist"     /usr/local/sbin/updat
 
 # Hints + trust anchor
 [ -f /etc/unbound/run/hints ] || install -o unbound -g unbound -m 0644 /usr/share/dns/root.hints /etc/unbound/run/hints 2>/dev/null || true
+install -d -o unbound -g unbound -m 0755 /var/lib/unbound
+install -d -o unbound -g unbound -m 0755 /etc/unbound/key
 
 # Generate root.key using unbound-anchor (required by unbound-checkconf)
+# unbound.conf uses /etc/unbound/key/root.key but unit ExecStartPre uses /var/lib/unbound/root.key — ensure BOTH exist
 if [ ! -s /etc/unbound/key/root.key ]; then
     # Install unbound-anchor if missing
     command -v unbound-anchor >/dev/null 2>&1 || apt-get install -y -qq unbound-anchor 2>/dev/null || true
@@ -144,6 +220,26 @@ if [ ! -s /etc/unbound/key/root.key ]; then
 KEY
     chown unbound:unbound /etc/unbound/key/root.key
     chmod 0644 /etc/unbound/key/root.key
+fi
+# Ensure /var/lib/unbound/root.key exists (unit ExecStartPre needs it; missing → silent start failure)
+if [ ! -s /var/lib/unbound/root.key ]; then
+    cp -f /etc/unbound/key/root.key /var/lib/unbound/root.key 2>/dev/null || true
+    [ -s /var/lib/unbound/root.key ] || /usr/local/sbin/unbound-anchor -a /var/lib/unbound/root.key 2>/dev/null || true
+    [ -s /var/lib/unbound/root.key ] || unbound-anchor -a /var/lib/unbound/root.key 2>/dev/null || true
+    [ -s /var/lib/unbound/root.key ] || cp -f /usr/share/dns/root.key /var/lib/unbound/root.key 2>/dev/null || true
+    [ -s /var/lib/unbound/root.key ] || cat > /var/lib/unbound/root.key <<'KEY2'
+. IN DS 20326 8 2 683D2D0ACB5C2EED8C6783AFA516D0BE8A937AC3504823D56FA7010615E84B1C
+KEY2
+    chown unbound:unbound /var/lib/unbound/root.key 2>/dev/null || true
+    chmod 0644 /var/lib/unbound/root.key 2>/dev/null || true
+    echo "[OK] /var/lib/unbound/root.key ensured (copied/generated)"
+fi
+# Keep both keys in sync (same DS)
+if [ -s /etc/unbound/key/root.key ] && [ -s /var/lib/unbound/root.key ]; then
+    if ! cmp -s /etc/unbound/key/root.key /var/lib/unbound/root.key 2>/dev/null; then
+        cp -f /etc/unbound/key/root.key /var/lib/unbound/root.key 2>/dev/null || true
+        chown unbound:unbound /var/lib/unbound/root.key 2>/dev/null || true
+    fi
 fi
 
 # Fragment defaults
@@ -178,7 +274,13 @@ while IFS= read -r -d '' source; do
     install -m 0644 "$source" "$destination"
 done < <(find "$DEPLOY_DIR/manage" -type f -print0)
 
-find "$WEBROOT" -type f -name '*.sh' -exec chmod 0755 {} +
+# Set permission untuk /var/www/manage dan directory di dalamnya (struktur rapi prod)
+chown root:root "$WEBROOT"
+chmod 0755 "$WEBROOT"
+# Direktori di dalam WEBROOT harus 0755, file 0644 (kecuali .sh 0755)
+find "$WEBROOT" -type d -exec chmod 0755 {} + 2>/dev/null || true
+find "$WEBROOT" -type f -exec chmod 0644 {} + 2>/dev/null || true
+find "$WEBROOT" -type f -name '*.sh' -exec chmod 0755 {} + 2>/dev/null || true
 chown -R root:root "$WEBROOT"
 
 # Panel runtime state
@@ -255,7 +357,8 @@ MUNIN_DOMAIN=$(hostname -d 2>/dev/null)
 [ -z "$MUNIN_DOMAIN" ] && MUNIN_DOMAIN="localdomain"
 MUNIN_HOST=$(hostname -s 2>/dev/null || hostname)
 
-# Munin config
+# Munin config — buat meskipun package munin gagal (agar line 260 tidak not found diam)
+mkdir -p /etc/munin 2>/dev/null || true
 if [ ! -f /etc/munin/munin.conf ] || ! grep -q '^\[' /etc/munin/munin.conf 2>/dev/null; then
     cat > /etc/munin/munin.conf <<EOF
 # TRUST-NG generated munin.conf (domain=$MUNIN_DOMAIN host=$MUNIN_HOST)
@@ -274,6 +377,10 @@ timeout 60
 EOF
     echo "[OK] munin.conf (domain=$MUNIN_DOMAIN host=$MUNIN_HOST)"
 fi
+# Jika munin-node binary tetap absen, skip enable tapi jangan crash update.sh/install.sh
+if ! command -v munin-node >/dev/null 2>&1 && ! dpkg -s munin-node >/dev/null 2>&1; then
+    echo "[WARN] munin-node tidak terinstall — skip enable munin-node (install manual: apt install munin-node)" >&2
+fi
 
 # Munin cron variants for panel repair/reset
 cat > /bin/munin-cron.full <<'EOF'
@@ -290,7 +397,20 @@ cp -f /bin/munin-cron.full /bin/munin-cron.new
 chmod +x /bin/munin-cron /bin/munin-cron.old /bin/munin-cron.new
 
 install -d -o munin -g munin -m 0755 /var/cache/munin/www /var/lib/munin /var/log/munin /var/run/munin
+# Munin unbound plugins — fix Permission denied for /etc/unbound/run/unbound.sock
+# Plugin default jalan sebagai nobody/munin, sedangkan socket 0660 unbound:unbound
+adduser munin unbound 2>/dev/null || true
+usermod -a -G unbound munin 2>/dev/null || true
+usermod -a -G unbound nobody 2>/dev/null || true
+cat > /etc/munin/plugin-conf.d/zzz-unbound <<'MUNINCONF'
+[unbound*]
+user root
+env.unbound_conf /etc/unbound/unbound.conf
+env.unbound_control /usr/local/sbin/unbound-control
+MUNINCONF
+chmod 0644 /etc/munin/plugin-conf.d/zzz-unbound
 systemctl enable --now munin-node
+systemctl restart munin-node 2>/dev/null || true
 
 # ---- 14. Nginx vhost (port 40443)
 NGINX_CONF="/etc/nginx/sites-available/trustng"
