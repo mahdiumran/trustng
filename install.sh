@@ -186,6 +186,11 @@ install -m 0755 "$DEPLOY_DIR/bin/unbound-checkconf" /usr/local/sbin/unbound-chec
 install -m 0755 "$DEPLOY_DIR/bin/unbound-control"   /usr/local/sbin/unbound-control
 [ -f "$DEPLOY_DIR/bin/unbound-anchor" ] && install -m 0755 "$DEPLOY_DIR/bin/unbound-anchor" /usr/local/sbin/unbound-anchor
 [ -f "$DEPLOY_DIR/bin/unbound-host" ] && install -m 0755 "$DEPLOY_DIR/bin/unbound-host" /usr/local/sbin/unbound-host
+# Symlink ke /usr/sbin agar 'unbound-control' tanpa path tetap ketemu (PATH minimal)
+for b in unbound unbound-checkconf unbound-control unbound-anchor unbound-host; do
+    [ -x "/usr/local/sbin/$b" ] && ln -sf "/usr/local/sbin/$b" "/usr/sbin/$b" 2>/dev/null || true
+    [ -x "/usr/local/sbin/$b" ] && ln -sf "/usr/local/sbin/$b" "/usr/bin/$b" 2>/dev/null || true
+done
 install -m 0755 "$DEPLOY_DIR/scripts/create_domain_cdb.py" /usr/local/libexec/create_domain_cdb.py
 install -m 0755 "$DEPLOY_DIR/scripts/update-blocklist"     /usr/local/sbin/update-blocklist
 [ -f "$DEPLOY_DIR/scripts/resetpass.sh" ] && install -m 0755 "$DEPLOY_DIR/scripts/resetpass.sh" /usr/local/sbin/resetpass.sh
@@ -282,15 +287,13 @@ while IFS= read -r -d '' source; do
     install -m 0644 "$source" "$destination"
 done < <(find "$DEPLOY_DIR/manage" -type f -print0)
 
-# Set permission untuk /var/www/manage dan directory di dalamnya (struktur rapi prod)
-# Dir harus 0775 root:www-data agar www-data bisa tempnam+rename via state_store.php (atomic write)
-chown root:www-data "$WEBROOT"
+# Set permission untuk /var/www/manage dan directory di dalamnya
+# www-data:www-data agar semua action web (maintenance/save/ganti logo via fopen/move_uploaded_file) bisa jalan
+chown www-data:www-data "$WEBROOT"
 chmod 0775 "$WEBROOT"
-find "$WEBROOT" -type d -exec chgrp www-data {} + 2>/dev/null \; -exec chmod 0775 {} + 2>/dev/null \; || true
-find "$WEBROOT" -type f -exec chmod 0644 {} + 2>/dev/null || true
+find "$WEBROOT" -type d -exec chown www-data:www-data {} + 2>/dev/null \; -exec chmod 0775 {} + 2>/dev/null \; || true
+find "$WEBROOT" -type f -exec chown www-data:www-data {} + 2>/dev/null \; -exec chmod 0644 {} + 2>/dev/null \; || true
 find "$WEBROOT" -type f -name '*.sh' -exec chmod 0755 {} + 2>/dev/null || true
-chown -R root:www-data "$WEBROOT" 2>/dev/null || chown -R root:root "$WEBROOT"
-chgrp -R www-data "$WEBROOT" 2>/dev/null || true
 
 # Panel runtime state
 for name in forwarder.data resolver.data hosts.data hosts6.data ipaddr.data ip6addr.data ipalias.data ipalias6.data owner.data clients.ip clients6.ip whitelist.db blacklist.local.db lp1.ip lp2.ip lp3.ip lp4.ip lp5.ip lp6.ip setsafesearch settproxy setdnssec setsnmpd setip6 ip6auto ssh.port ssl.port snmpd.community; do

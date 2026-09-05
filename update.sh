@@ -125,10 +125,13 @@ if [ "$do_binary" = 1 ]; then
 fi
 
 if [ "$do_config" = 1 ]; then
+    # repair whitelist/forwarder/hosts yang CRLF sebelum validasi (biar tidak REJECTED karena \r)
+    run_remote 'for f in /var/www/manage/whitelist.db /var/www/manage/blacklist.local.db; do [ -f "$f" ] && dos2unix "$f" 2>/dev/null || sed -i "s/\r//g" "$f" 2>/dev/null || true; done; [ -x /var/www/manage/setwhitelist.sh ] && sudo -n sh /var/www/manage/setwhitelist.sh 2>/dev/null || true; [ -x /var/www/manage/setforwarder.sh ] && sudo -n sh /var/www/manage/setforwarder.sh 2>/dev/null || true; [ -x /var/www/manage/sethosts.sh ] && sudo -n sh /var/www/manage/sethosts.sh 2>/dev/null || true; chown unbound:unbound /etc/unbound/whitelist.conf /etc/unbound/forwarder.conf /etc/unbound/hosts.conf 2>/dev/null || true'
     # validate dulu di target dengan binary yang ada
     push_artifact "$DEPLOY_DIR/conf/unbound.conf" "/etc/unbound/unbound.conf.new"
     if ! run_remote "/usr/local/sbin/unbound-checkconf /etc/unbound/unbound.conf.new"; then
         echo "REJECTED: config baru gagal checkconf — tidak diaktifkan" >&2
+        echo "--- whitelist.conf head -->" >&2; run_remote "head -n 3 /etc/unbound/whitelist.conf | od -c | head -1" >&2 || true
         run_remote "rm -f /etc/unbound/unbound.conf.new"
         exit 1
     fi
@@ -228,8 +231,9 @@ if [ "$do_web_changed" = 1 ]; then
             fi
         done
     fi
-    run_remote "chown root:www-data $WEBROOT; chmod 0775 $WEBROOT; find $WEBROOT -type d -exec chgrp www-data {} + 2>/dev/null \; -exec chmod 0775 {} + 2>/dev/null \; || true; find $WEBROOT -type f -exec chmod 0644 {} + 2>/dev/null; find $WEBROOT -type f -name '*.sh' -exec chmod 0755 {} + 2>/dev/null; chown -R root:www-data $WEBROOT 2>/dev/null || true; chgrp -R www-data $WEBROOT 2>/dev/null || true"
-    run_remote "for f in $WEBROOT/*.data $WEBROOT/*.db $WEBROOT/*.ip $WEBROOT/*.count $WEBROOT/whitelist.db $WEBROOT/blacklist.local.db $WEBROOT/includes/unbound.php; do [ -f \"\$f\" ] && chown www-data:www-data \"\$f\" 2>/dev/null || true; [ -f \"\$f\" ] && chmod 0644 \"\$f\" 2>/dev/null || true; done; for f in $WEBROOT/*.data $WEBROOT/*.ip; do [ -f \"\$f\" ] && chmod 0664 \"\$f\" 2>/dev/null || true; done"
+    run_remote "chown www-data:www-data $WEBROOT; chmod 0775 $WEBROOT; find $WEBROOT -type d -exec chown www-data:www-data {} + 2>/dev/null \; -exec chmod 0775 {} + 2>/dev/null \; || true; find $WEBROOT -type f -exec chown www-data:www-data {} + 2>/dev/null \; -exec chmod 0644 {} + 2>/dev/null \; || true; find $WEBROOT -type f -name '*.sh' -exec chmod 0755 {} + 2>/dev/null || true"
+    # Data files writable by www-data (panel runtime state)
+    run_remote "for f in $WEBROOT/*.data $WEBROOT/*.db $WEBROOT/*.ip $WEBROOT/*.count $WEBROOT/whitelist.db $WEBROOT/blacklist.local.db $WEBROOT/includes/unbound.php; do [ -f \"\$f\" ] && chown www-data:www-data \"\$f\" 2>/dev/null || true; [ -f \"\$f\" ] && chmod 0664 \"\$f\" 2>/dev/null || true; done; for f in $WEBROOT/*.data $WEBROOT/*.ip; do [ -f \"\$f\" ] && chmod 0664 \"\$f\" 2>/dev/null || true; done"
 
     # Fix PHP-FPM PATH if needed
     run_remote 'PHP_FPM_POOL="/etc/php/8.2/fpm/pool.d/www.conf"
@@ -347,5 +351,5 @@ elif [ "$do_config" = 1 ]; then
     run_remote "systemctl reload unbound || systemctl restart unbound"
 fi
 
-run_remote "unbound-control -c /etc/unbound/unbound.conf status 2>&1 | head -3; echo "---"; sudo -u www-data unbound-control -c /etc/unbound/unbound.conf stats_noreset 2>&1 | head -3"
+run_remote "/usr/local/sbin/unbound-control -c /etc/unbound/unbound.conf status 2>&1 | head -3; echo "---"; sudo -u www-data /usr/local/sbin/unbound-control -c /etc/unbound/unbound.conf stats_noreset 2>&1 | head -3"
 echo "Update selesai."
