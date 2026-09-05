@@ -245,23 +245,26 @@ fi
 # ---- Trust anchor fix (/var/lib/unbound/root.key missing on fresh deploy)
 if [ "$MODE" != "blocklist" ]; then
     run_remote '
-    install -d -o unbound -g unbound -m 0755 /var/lib/unbound /etc/unbound/key 2>/dev/null || mkdir -p /var/lib/unbound /etc/unbound/key; chown unbound:unbound /var/lib/unbound /etc/unbound/key 2>/dev/null || true
-    if [ ! -s /etc/unbound/key/root.key ]; then
-        unbound-anchor -a /etc/unbound/key/root.key 2>/dev/null || /usr/local/sbin/unbound-anchor -a /etc/unbound/key/root.key 2>/dev/null || true
-        [ -s /etc/unbound/key/root.key ] || cp -f /var/lib/unbound/root.key /etc/unbound/key/root.key 2>/dev/null || true
-        [ -s /etc/unbound/key/root.key ] || cp -f /usr/share/dns/root.key /etc/unbound/key/root.key 2>/dev/null || true
-        [ -s /etc/unbound/key/root.key ] || printf ". IN DS 20326 8 2 683D2D0ACB5C2EED8C6783AFA516D0BE8A937AC3504823D56FA7010615E84B1C\n" > /etc/unbound/key/root.key
+     install -d -o unbound -g unbound -m 0755 /var/lib/unbound /etc/unbound/key 2>/dev/null || mkdir -p /var/lib/unbound /etc/unbound/key; chown unbound:unbound /var/lib/unbound /etc/unbound/key 2>/dev/null || true
+    is_bad() { [ ! -s "$1" ] || [ "$(wc -c <"$1" 2>/dev/null)" -lt 500 ] || ! grep -q "IN DS" "$1" 2>/dev/null; }
+    if is_bad /etc/unbound/key/root.key; then
+        /usr/local/sbin/unbound-anchor -a /etc/unbound/key/root.key 2>/dev/null || unbound-anchor -a /etc/unbound/key/root.key 2>/dev/null || true
+        is_bad /etc/unbound/key/root.key && cp -f /var/lib/unbound/root.key /etc/unbound/key/root.key 2>/dev/null || true
+        is_bad /etc/unbound/key/root.key && cp -f /usr/share/dns/root.key /etc/unbound/key/root.key 2>/dev/null || true
+        is_bad /etc/unbound/key/root.key && printf ". IN DS 20326 8 2 683D2D0ACB5C2EED8C6783AFA516D0BE8A937AC3504823D56FA7010615E84B1C\n" > /etc/unbound/key/root.key
         chown unbound:unbound /etc/unbound/key/root.key 2>/dev/null || true; chmod 0644 /etc/unbound/key/root.key 2>/dev/null || true
+        echo "[FIX] /etc/unbound/key/root.key repaired (was 83 bytes/corrupt)"
     fi
-    if [ ! -s /var/lib/unbound/root.key ]; then
+    if is_bad /var/lib/unbound/root.key; then
         cp -f /etc/unbound/key/root.key /var/lib/unbound/root.key 2>/dev/null || true
-        [ -s /var/lib/unbound/root.key ] || unbound-anchor -a /var/lib/unbound/root.key 2>/dev/null || /usr/local/sbin/unbound-anchor -a /var/lib/unbound/root.key 2>/dev/null || true
-        [ -s /var/lib/unbound/root.key ] || cp -f /usr/share/dns/root.key /var/lib/unbound/root.key 2>/dev/null || true
-        [ -s /var/lib/unbound/root.key ] || printf ". IN DS 20326 8 2 683D2D0ACB5C2EED8C6783AFA516D0BE8A937AC3504823D56FA7010615E84B1C\n" > /var/lib/unbound/root.key
+        is_bad /var/lib/unbound/root.key && /usr/local/sbin/unbound-anchor -a /var/lib/unbound/root.key 2>/dev/null || unbound-anchor -a /var/lib/unbound/root.key 2>/dev/null || true
+        is_bad /var/lib/unbound/root.key && cp -f /usr/share/dns/root.key /var/lib/unbound/root.key 2>/dev/null || true
+        is_bad /var/lib/unbound/root.key && printf ". IN DS 20326 8 2 683D2D0ACB5C2EED8C6783AFA516D0BE8A937AC3504823D56FA7010615E84B1C\n" > /var/lib/unbound/root.key
         chown unbound:unbound /var/lib/unbound/root.key 2>/dev/null || true; chmod 0644 /var/lib/unbound/root.key 2>/dev/null || true
         echo "[OK] /var/lib/unbound/root.key ensured"
     fi
-    cmp -s /etc/unbound/key/root.key /var/lib/unbound/root.key 2>/dev/null || cp -f /etc/unbound/key/root.key /var/lib/unbound/root.key 2>/dev/null || true
+    cmp -s /etc/unbound/key/root.key /var/lib/unbound/root.key 2>/dev/null || { cp -f /etc/unbound/key/root.key /var/lib/unbound/root.key 2>/dev/null; chown unbound:unbound /var/lib/unbound/root.key 2>/dev/null || true; }
+    chown unbound:unbound /var/lib/unbound/root.key 2>/dev/null || true
     '
 fi
 

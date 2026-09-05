@@ -203,7 +203,9 @@ install -d -o unbound -g unbound -m 0755 /etc/unbound/key
 
 # Generate root.key using unbound-anchor (required by unbound-checkconf)
 # unbound.conf uses /etc/unbound/key/root.key but unit ExecStartPre uses /var/lib/unbound/root.key — ensure BOTH exist
-if [ ! -s /etc/unbound/key/root.key ]; then
+# treat <100 bytes as corrupt (prod showed 83 bytes → SERVFAIL DNSSEC)
+is_bad_anchor() { [ ! -s "$1" ] || [ "$(wc -c <"$1" 2>/dev/null)" -lt 500 ] || ! grep -q "IN DS" "$1" 2>/dev/null; }
+if is_bad_anchor /etc/unbound/key/root.key; then
     # Install unbound-anchor if missing
     command -v unbound-anchor >/dev/null 2>&1 || apt-get install -y -qq unbound-anchor 2>/dev/null || true
     mkdir -p /etc/unbound/key
@@ -222,7 +224,7 @@ KEY
     chmod 0644 /etc/unbound/key/root.key
 fi
 # Ensure /var/lib/unbound/root.key exists (unit ExecStartPre needs it; missing → silent start failure)
-if [ ! -s /var/lib/unbound/root.key ]; then
+if is_bad_anchor /var/lib/unbound/root.key; then
     cp -f /etc/unbound/key/root.key /var/lib/unbound/root.key 2>/dev/null || true
     [ -s /var/lib/unbound/root.key ] || /usr/local/sbin/unbound-anchor -a /var/lib/unbound/root.key 2>/dev/null || true
     [ -s /var/lib/unbound/root.key ] || unbound-anchor -a /var/lib/unbound/root.key 2>/dev/null || true
