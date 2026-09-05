@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/includes/state_store.php';
 error_reporting(0);
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
@@ -29,10 +30,9 @@ if($_POST['data'] ?? null) {
         if (strlen($line) > 253) continue;
         $clean[] = $line;
     }
-    $file = fopen($BL_FILE, 'w');
-    if ($file) { fwrite($file, implode("\n", $clean) . "\n"); fclose($file); }
-    shell_exec("dos2unix $BL_FILE 2>/dev/null");
-    shell_exec('sudo /usr/local/sbin/update-blocklist > /dev/null 2>&1 &');
+    trustng_state_write(basename($BL_FILE), implode("\n", $clean) . "\n");
+    shell_exec('dos2unix ' . escapeshellarg(trustng_state_path(basename($BL_FILE))) . ' 2>/dev/null');
+    shell_exec('sudo -n /usr/local/sbin/update-blocklist > /dev/null 2>&1 &');
     sleep (0.3);
     header('location: setblack.php');
     exit;

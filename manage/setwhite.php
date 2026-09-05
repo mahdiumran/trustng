@@ -1,4 +1,5 @@
 ﻿<?php
+require_once __DIR__ . '/includes/state_store.php';
 error_reporting(0);
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
@@ -12,13 +13,10 @@ $allowed_prefix_ip = "https://$myip:40443/";
 
 if($_POST['data'] ?? null) {
     $data = $_POST['data'] ?? '';
-    $file = fopen('whitelist.db', 'w');
-    if ($file) { fwrite($file, "$data"); fclose($file); }
-    $data = preg_replace('#\s+#',', ',trim($data));
-    shell_exec('dos2unix whitelist.db');
-    $file = fopen('setdns.new', 'w');
-    if ($file) { fwrite($file, ''); fclose($file); }
-    shell_exec('sh setwhitelist.sh');
+    trustng_state_write('whitelist.db', $data);
+    shell_exec('dos2unix ' . escapeshellarg(trustng_state_path('whitelist.db')));
+    trustng_state_write('setdns.new', '');
+    trustng_run_panel_script('setwhitelist.sh');
     sleep (0.3);
     header('location: setwhite.php');
 }
