@@ -214,7 +214,3 @@ journalctl -u php8.2-fpm -n 50
 ```bash
 /usr/local/sbin/repairmunin.sh
 ```
-
-## Lisensi
-
-Hak Cipta © 2024 Kominfo
