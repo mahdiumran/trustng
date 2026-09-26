@@ -2,6 +2,9 @@
 
 DNS filtering & management appliance berbasis Unbound, dengan web management panel berbahasa Indonesia.
 
+<img width="2547" height="1304" alt="image" src="https://github.com/user-attachments/assets/b7b26e07-6db1-4e00-8cdd-6bcd4cb1c7cc" />
+
+
 ## Ringkasan
 
 TRUST-NG adalah solusi DNS sinkhole yang menjalankan Unbound (patched) sebagai resolver utama, dilengkapi:
