@@ -34,9 +34,9 @@ function tng_unbound_collect_raw($cmd_suffix) {
     // Fallback sudo — hanya jika error permission / config
     if ($last !== '' && (stripos($last, 'Permission denied') !== false || stripos($last, 'connect:') !== false || stripos($last, 'could not read') !== false)) {
         foreach (array(
-            "sudo /usr/local/sbin/unbound-control -c " . escapeshellarg(TNG_UNBOUND_CONF) . " $cmd_suffix 2>&1",
-            "sudo unbound-control -c " . escapeshellarg(TNG_UNBOUND_CONF) . " $cmd_suffix 2>&1",
-            "sudo /usr/local/sbin/unbound-control $cmd_suffix 2>&1",
+            "sudo -n /usr/local/sbin/unbound-control -c " . escapeshellarg(TNG_UNBOUND_CONF) . " $cmd_suffix 2>&1",
+            "sudo -n unbound-control -c " . escapeshellarg(TNG_UNBOUND_CONF) . " $cmd_suffix 2>&1",
+            "sudo -n /usr/local/sbin/unbound-control $cmd_suffix 2>&1",
         ) as $cmd) {
             $out = @shell_exec($cmd);
             if ($out === null) $out = '';

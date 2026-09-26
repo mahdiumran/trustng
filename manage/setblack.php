@@ -1,5 +1,7 @@
 <?php
 require_once __DIR__ . '/includes/state_store.php';
+require_once __DIR__ . '/includes/ui.php';
+require_once __DIR__ . '/includes/auth.php';
 error_reporting(0);
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
@@ -19,6 +21,10 @@ if (strpos($referer, $allowed_prefix) !== 0 && strpos($referer, $allowed_prefix_
 $BL_FILE = '/var/www/manage/blacklist.local.db';
 
 if($_POST['data'] ?? null) {
+    if (!tng_csrf_check($_POST['csrf'] ?? '')) {
+        http_response_code(403);
+        exit(0);
+    }
     $data = $_POST['data'] ?? '';
     // sanitasi: hanya domain chars, satu per baris
     $lines = preg_split('/\r\n|\r|\n/', $data);
@@ -38,54 +44,28 @@ if($_POST['data'] ?? null) {
     exit;
 }
 
-$file = file($BL_FILE);
+$file = is_file($BL_FILE) ? file($BL_FILE) : array();
 $count = is_file('/etc/unbound/db/trust.count') ? intval(file_get_contents('/etc/unbound/db/trust.count')) : 0;
-echo '<html>
-<head>
-<meta http-equiv="X-UA-Compatible" content="IE=edge"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" type="text/css" href="style.css" />
-<title>DNS TRUST-NG - BLACKLIST</title>
-<script src="/jquery.min.js"></script>
-</head>
-<body class="with-sidebar sidebar-collapsed">
-<div id="sidebar-overlay"></div>
-<div class="page-shell">';
-include_once 'menu.php';
-trustng_render_sidebar('setblack.php');
-echo '
-<div class="page-content">
-<div class="tng-topbar"><button class="tng-topbar-toggle" title="Toggle menu" aria-label="Toggle menu"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="4.5" width="16" height="2" rx="1" fill="currentColor"/><rect x="2" y="9" width="16" height="2" rx="1" fill="currentColor"/><rect x="2" y="13.5" width="16" height="2" rx="1" fill="currentColor"/></svg></button><span class="tng-topbar-title">Blacklist</span><div class="tng-topbar-spacer"></div><a class="tng-topbar-back" href="/">&#8592; Dashboard</a></div>
-<div align=center>
-<script>
-    $("document").ready(function(){
-    $("#line_numbers").linenumbers({col_width:"50px"});
-    })
-</script>
-<script src="linear.js"></script>
-<h3>Blacklist Manual</h3>
+tng_ui_page_start('setblack.php', 'Blacklist', 'Domain blokir tambahan untuk digabung ke blocklist Komdigi Trust+.');
+tng_ui_card_start('Blacklist Manual', 'Domain di daftar Komdigi diperbarui otomatis 2× sehari. Tambahkan domain sendiri di bawah — akan digabung ke blocklist saat updater berikutnya berjalan.');
+echo '<div class="bl-section">
 <form name="blist" action="setblack.php" method="post">
-<div class="bl-section">
-  <div class="bl-head">
+  <input type="hidden" name="csrf" value="' . tng_e(tng_csrf_token()) . '">
+  <div class="bl-head editor-head">
     <span class="bl-title">Domain Blokir Tambahan</span>
     <span class="bl-badge">Komdigi Trust+: ' . number_format($count, 0, ",", ".") . ' domain</span>
   </div>
-  <div class="bl-desc">Domain di daftar Komdigi diperbarui otomatis 2&times; sehari. Tambahkan domain sendiri di bawah &mdash; akan digabung ke blocklist saat updater berikutnya berjalan.</div>
-  <div class="areatxt"><textarea rows="10" name="data" id="line_numbers" placeholder="satu domain per baris">';
-if (is_array($file)) { foreach($file as $text) { echo htmlspecialchars($text); } }
+  <div class="areatxt"><textarea rows="12" name="data" placeholder="satu domain per baris" spellcheck="false" autocomplete="off" aria-label="Daftar domain blokir manual">';
+if (is_array($file)) { foreach($file as $text) { echo htmlspecialchars($text, ENT_QUOTES, 'UTF-8'); } }
 echo '</textarea></div>
-  <div class="bl-actions">
+  <div class="bl-actions form-actions">
     <input type="submit" id="submit" value="Simpan" class="submit-button"/>
-    <input type="button" onclick="location.href=\'manage.php\';" class="submit-button" value="Kembali"/>
+    <a href="/" class="submit-button button-secondary">Kembali</a>
     <span class="bl-hint">*domain divalidasi otomatis</span>
   </div>
-</div>
 </form>
-<p><small><b>&#169; 2024 Kominfo</b></small>
-</div>
-</div>
 </div>';
+tng_ui_card_end();
+
+tng_ui_page_end('setblack.php');
 ?>

@@ -24,18 +24,8 @@ if ($resolver_data !== false && trim($resolver_data) !== '') {
 
 $result = array();
 if ($cachehits > 0) $result['Local Cache'] = $cachehits;
-
-if ($cachemiss > 0) {
-    if (count($resolvers) > 0) {
-        // Split cachemiss across resolvers
-        $per_resolver = intval($cachemiss / count($resolvers));
-        foreach ($resolvers as $name => $_) {
-            $result[$name] = $per_resolver;
-        }
-    } else {
-        $result['Upstream'] = $cachemiss;
-    }
-}
+if ($cachemiss > 0) $result['Recursive / Forwarded'] = $cachemiss;
+if (empty($result) && ($stats === '' || preg_match('/^error:|^could not/i', trim($stats)))) $result['_error'] = $stats ?: 'unbound-control tidak merespon';
 
 echo json_encode($result);
 ?>

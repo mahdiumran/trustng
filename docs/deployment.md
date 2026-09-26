@@ -2,37 +2,17 @@
 
 ## 1. Prepare a clean host
 
-Supported deployments target Debian 12 or a compatible Debian-based Linux host. Use a disposable VM for the first installation. The installer and panel can restart networking, SSH, nginx, Unbound, nftables, SNMP, and the host itself.
-
-Install the base dependencies before running the installer:
-
-```sh
-apt-get update
-apt-get install -y curl dnsutils python3 systemd nftables openssl sudo php-fpm php-sqlite3 php8.2-cli dos2unix
-```
-
-Install Munin and `lm-sensors` separately when monitoring is required. The live request/statistics pages also require the site-specific `/usr/bin/s` and `/usr/bin/r` utilities.
+Supported deployments target Debian 12 x86_64. Run `bash install.sh` as root on a disposable VM first; installation configures network interface naming and can restart networking, SSH, nginx, Unbound, nftables, and SNMP.
 
 ## 2. Install the panel
 
-The panel is a webroot package. Copy the tracked application files to `/var/www/manage` (or another webroot used consistently by nginx, PHP-FPM, and the helper scripts):
+From the repository root, run:
 
 ```sh
-install -d -m 0755 /var/www/manage
-# Copy only reviewed source files; do not copy local *.data, *.db, *.new, credentials, or logs.
-cp -a manage/. /var/www/manage/
-chown -R root:root /var/www/manage
-find /var/www/manage -type f -name '*.sh' -exec chmod 0755 {} +
+sudo bash install.sh
 ```
 
-The repository checkout itself is historically the panel root. If the sources are checked out directly into the target webroot, omit the `manage/` prefix in the example and use `installer/install-panel.sh` to avoid copying runtime state.
-
-Create mutable state files from `templates/` or as empty files. They must be writable by the PHP-FPM user, normally `www-data`, and must not be committed:
-
-```sh
-install -d -m 0750 /var/lib/trustng-auth
-chown www-data:www-data /var/lib/trustng-auth
-```
+The installer copies only application source files to `/var/www/manage`, preserves existing mutable state on repeated runs, and creates missing runtime files with the required `www-data` permissions.
 
 The authentication SQLite database belongs outside the webroot at `/var/lib/trustng-auth/auth.db`. The first-boot marker `setup.mulai` forces password setup through `login.php?setup=1`.
 
@@ -50,7 +30,7 @@ Keep `login.php`, `logout.php`, and the nginx `munin_auth.php` subrequest endpoi
 
 ## 4. Install the DNS service bundle
 
-Read `installer/README.md` and `installer/unbound-install.sh` before running them. The Unbound installer is intended to run as root, is idempotent for existing configuration, validates `unbound.conf`, installs the patched binary bundle, configures the blocklist timer, and performs service health checks.
+Run `bash install.sh`. The installer is intended to run as root, is idempotent for existing configuration and state, validates `unbound.conf`, installs the patched binary bundle, configures blocklist and metrics timers, and performs service health checks.
 
 The installer may create or modify:
 

@@ -13,42 +13,34 @@ if (strpos($referer, $allowed_prefix) !== 0 && strpos($referer, $allowed_prefix_
 $back = 'history.back()';
 $ipaddr = shell_exec("ifconfig eth0 | grep netmask | sed 's/ .*inet //;s/ .*//'");
 
+require_once __DIR__ . '/includes/ui.php';
 
-echo '<!DOCTYPE html>
-<html lang="id">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" type="text/css" href="style.css" />
-<title>DNS TRUST-NG - MANAGE</title>
-</head>
-<body class="with-sidebar sidebar-collapsed">
-<div id="sidebar-overlay"></div>
-<div class="page-shell">';
-include_once 'menu.php';
-trustng_render_sidebar('maintenance.php');
+$actions = array(
+    array('repairmunin.php', 'fa-chart-simple', 'Repair Graph', '', 'Konfirmasi repair Munin? graph akan direset dan bisa dilihat kembali 5 menit kemudian'),
+    array('restartunbound.php', 'fa-rotate', 'Restart Unbound', '', 'yakin mau restart Unbound? dns cache akan terhapus'),
+    array('reset.php', 'fa-arrow-rotate-left', 'Reset', 'danger', "Konfirmasi reset system? konfigurasi akan dikembalikan ke default\n\nPerubahan efektif setelah dilakukan perintah Reboot"),
+    array('reload.php', 'fa-arrows-rotate', 'Reload', '', 'Konfirmasi reload system? hanya services terkait perubahan yang akan dijalankan ulang'),
+    array('updateblacklist.php', 'fa-cloud-arrow-down', 'Update Blacklist', '', 'Konfirmasi update blacklist sekarang? proses mengambil ~9.5 jt domain dan bisa memakan waktu beberapa menit'),
+    array('reboot.php', 'fa-power-off', 'Reboot', 'danger', 'Konfirmasi reboot system? keseluruhan system akan dijalankan ulang'),
+);
 
-echo '<div class="page-content">';
-echo '<div class="tng-topbar"><button class="tng-topbar-toggle" title="Toggle menu" aria-label="Toggle menu"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="4.5" width="16" height="2" rx="1" fill="currentColor"/><rect x="2" y="9" width="16" height="2" rx="1" fill="currentColor"/><rect x="2" y="13.5" width="16" height="2" rx="1" fill="currentColor"/></svg></button><span class="tng-topbar-title">Maintenance</span><div class="tng-topbar-spacer"></div><a class="tng-topbar-back" href="/">&#8592; Dashboard</a></div>';
-echo'
-<div align=center>
-<a href="/"><img src="img/logo-img/trust-ng.jpg" width="200px"></a>
-<h3>Maintenance<br><small>'.$ipaddr.'</small></h3>
-<div class="action-grid">
-<a class="action-card" href="repairmunin.php" onclick="return confirm(\'Konfirmasi repair Munin? graph akan direset dan bisa dilihat kembali 5 menit kemudian\')"><i class="fa-solid fa-chart-simple"></i><span>Repair Graph</span></a>
-<a class="action-card" href="restartunbound.php" onclick="return confirm(\'yakin mau restart Unbound? dns cache akan terhapus\')"><i class="fa-solid fa-rotate"></i><span>Restart Unbound</span></a>
-<a class="action-card danger" href="reset.php" onclick="return confirm(\'Konfirmasi reset system? konfigurasi akan dikembalikan ke default\n\nPerubahan efektif setelah dilakukan perintah Reboot\')"><i class="fa-solid fa-arrow-rotate-left"></i><span>Reset</span></a>
-<a class="action-card" href="reload.php" onclick="return confirm(\'Konfirmasi reload system? hanya services terkait perubahan yang akan dijalankan ulang\')"><i class="fa-solid fa-arrows-rotate"></i><span>Reload</span></a>
-<a class="action-card" href="updateblacklist.php" onclick="return confirm(\'Konfirmasi update blacklist sekarang? proses mengambil ~9.5 jt domain dan bisa memakan waktu beberapa menit\')"><i class="fa-solid fa-cloud-arrow-down"></i><span>Update Blacklist</span></a>
-<a class="action-card danger" href="reboot.php" onclick="return confirm(\'Konfirmasi reboot system? keseluruhan system akan dijalankan ulang\')"><i class="fa-solid fa-power-off"></i><span>Reboot</span></a>
-</div>
-<p><a href="/"> <input type="button" class="submit-button" value="Kembali"></a></p>
-<br><br>
-<p><small><b>&#169; 2024 Kominfo</b></small>
-</div>';
+tng_ui_page_start('maintenance.php', 'Maintenance', 'Operasi pemeliharaan dan pemulihan layanan resolver.', 'SISTEM');
+tng_ui_card_start('Tindakan Sistem', 'Setiap tindakan memengaruhi layanan resolver secara langsung. Tindakan berisiko meminta konfirmasi terlebih dahulu.');
+echo '<div class="action-grid">';
+foreach ($actions as $action) {
+    $class = 'action-card' . ($action[3] !== '' ? ' ' . $action[3] : '');
+    echo '<a class="' . tng_e($class) . '" href="' . tng_e($action[0]) . '" data-confirm="' . tng_e($action[4]) . '"><i class="fa-solid ' . tng_e($action[1]) . '" aria-hidden="true"></i><span>' . tng_e($action[2]) . '</span></a>';
+}
+echo '</div>';
+tng_ui_card_end();
 
-echo '</div></div>';
+$ip = $ipaddr !== null ? trim($ipaddr) : '';
+if ($ip !== '') {
+    tng_ui_card_start('Antarmuka Manajemen', 'Alamat IP yang digunakan untuk mengakses panel ini.');
+    echo '<div class="set-row"><div class="set-row-info"><span class="set-row-name">eth0</span><span class="set-row-desc">Antarmuka manajemen</span></div><span class="label-mono">' . tng_e($ip) . '</span></div>';
+    tng_ui_card_end();
+}
+
+echo '<div class="form-actions"><a class="button button-secondary" href="/">Kembali ke dashboard</a></div>';
+tng_ui_page_end('maintenance.php');
 ?>

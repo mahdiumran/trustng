@@ -12,10 +12,10 @@ function stRender(data) {
   var html = '';
   $.each(ST_HIGHLIGHTS, function (i, h) {
     var val = (data.stats && data.stats[h[1]] != null) ? data.stats[h[1]] : '0';
-    html += '<div class="tng-stat-card ' + h[3] + '">'
-          + '<div class="tng-stat-head"><span class="tng-stat-icon"><i class="' + h[2] + '"></i></span>'
-          + '<span class="tng-stat-name">' + h[0] + '</span></div>'
-          + '<div class="tng-stat-value">' + $('<div>').text(val).html() + '</div>'
+    html += '<div class="tng-status-card ' + h[3] + '">'
+          + '<div class="tng-status-icon"><i class="' + h[2] + '" aria-hidden="true"></i></div>'
+          + '<div class="tng-status-info"><span class="tng-status-name">' + h[0] + '</span>'
+          + '<span class="tng-status-val">' + $('<div>').text(val).html() + '</span></div>'
           + '</div>';
   });
   $('#st-cards').html(html);
@@ -24,25 +24,24 @@ function stRender(data) {
 
 function stToggleRaw() {
   var pre = $('#stats-raw');
-  pre.toggleClass('is-hidden');
-  $('#st-toggle-btn').text(pre.hasClass('is-hidden') ? 'Tampilkan' : 'Sembunyikan');
+  pre.toggleClass('stats-raw');
+  $('#st-toggle-btn').text(pre.hasClass('stats-raw') ? 'Tampilkan' : 'Sembunyikan');
 }
 
 function stRefresh() {
-  $('#st-cards').addClass('di-loading');
   $.getJSON('stats_data.php', function (data) {
     if (data) {
       if (data.ok) stRender(data);
       else if (data.error) {
-        $('#st-cards').html('<div class="di-card" style="grid-column:1/-1;border-left:3px solid #ff4d6d;padding:12px;color:#ffb3c0">'
-          + $('<div>').text('Unbound stats error: ' + data.error).html()
-          + '<br><small>Hints: sock /etc/unbound/run/unbound.sock, groups www-data, symlink /usr/local/etc/unbound/unbound.conf</small></div>');
+        $('#st-cards').html('');
+        $('#st-error').html('<div class="notice notice-critical" role="status">'
+          + '<i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i><div><strong>Unbound stats error</strong>'
+          + '<p>' + $('<div>').text(data.error).html() + '</p></div></div>');
         if (data.raw) $('#stats-raw').text(data.raw);
       }
     }
   }, 'json')
-  .fail(function () { /* keep last good values */ })
-  .always(function () { $('#st-cards').removeClass('di-loading'); });
+  .fail(function () { /* keep last good values */ });
 }
 
 $(function () { stRefresh(); });

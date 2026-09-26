@@ -1,12 +1,12 @@
 <?php
 error_reporting(0);
-$filename = 'setup.mulai';
+require_once __DIR__ . '/includes/auth.php';
+$filename = TNG_SETUP_FLAG;
 $index='yes';
 
 if(file_exists($filename)){
-    echo "<script>alert('Pertama kali login harus ganti password');</script>";
-    include 'setpwd.php';
-    exit;
+    header('Location: /login.php?setup=1');
+    exit(0);
 } else {
     include 'manage.php';
 }

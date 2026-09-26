@@ -1,5 +1,5 @@
 <?php
 $data = `/usr/bin/sensors`;
-echo "<pre><small>$data</small></pre>";
+echo "<pre><small>" . htmlspecialchars((string) $data, ENT_QUOTES, 'UTF-8') . "</small></pre>";
 
 ?>

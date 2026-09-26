@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/includes/state_store.php';
+require_once __DIR__ . '/includes/ui.php';
 error_reporting(0);
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
@@ -93,7 +94,7 @@ if (array_key_exists('data', $_POST)) {
         if (isValidCIDR4($line)) {
             // valid
         } else {
-            echo "<script>alert('$line (ipv4) tidak valid');history.back();</script>";
+            $error = $line . ' (IPv4) tidak valid';
             $problem4 = 'yes';
             break;
         }
@@ -110,7 +111,7 @@ if (array_key_exists('data', $_POST)) {
             if (isValidCIDR6($line)) {
                 // valid
             } else {
-                echo "<script>alert('$line (ipv6) tidak valid');history.back();</script>";
+                $error = $line . ' (IPv6) tidak valid';
                 $problem6 = 'yes';
                 break;
             }
@@ -119,7 +120,7 @@ if (array_key_exists('data', $_POST)) {
 
     if ($problem4 !== 'yes' && $problem6 !== 'yes') {
         trustng_state_touch('setclient.new');
-        echo "<script>alert('ACL clients berhasil disimpan.\\nSilahkan buka menu Maintenance -> Reload System untuk mengaktifkan perubahan.');</script>";
+        $notice = 'ACL clients berhasil disimpan. Jalankan Maintenance → Reload untuk mengaktifkan perubahan.';
     }
 
     $index = 'yes'; $back = 'history.go(-2)';
@@ -137,48 +138,35 @@ $file6 = trustng_state_lines('clients6.ip');
 $ipaddr = shell_exec("ifconfig eth0 | grep netmask | sed 's/ .*inet //;s/ .*//'");
 $useip6 = file_get_contents('setip6');
 
-echo '<!DOCTYPE html>
-<html lang="id">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" type="text/css" href="style.css" />
-<title>DNS TRUST-NG - ACL CLIENTS</title>
-<script src="kunci.js"></script>
-</head>
-<body class="with-sidebar sidebar-collapsed">
-<div id="sidebar-overlay"></div>
-<div class="page-shell">';
-include_once 'menu.php';
-trustng_render_sidebar('setclient.php');
+tng_ui_page_start('setclient.php', 'ACL Clients', 'Daftar CIDR klien yang diizinkan melakukan rekursi. IP referensi: ' . trim($ipaddr));
+if (!empty($notice)) tng_ui_notice('success', 'Perubahan tersimpan', $notice);
+if (!empty($error)) tng_ui_notice('critical', 'Data tidak valid', $error);
+tng_ui_card_start('ACL Recursive Clients', 'Format: ip_address/cidr per baris, tanpa titik koma (;). Warning, jangan asal copas — syntax harus benar.');
 
-echo '<div class="page-content">';
-echo '<div class="tng-topbar"><button class="tng-topbar-toggle" title="Toggle menu" aria-label="Toggle menu"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="4.5" width="16" height="2" rx="1" fill="currentColor"/><rect x="2" y="9" width="16" height="2" rx="1" fill="currentColor"/><rect x="2" y="13.5" width="16" height="2" rx="1" fill="currentColor"/></svg></button><span class="tng-topbar-title">ACL Clients</span><div class="tng-topbar-spacer"></div><a class="tng-topbar-back" href="/">&#8592; Dashboard</a></div>';
-echo '
-<div align=center>
-<a href="/"><img src="img/logo-img/trust-ng.jpg" width="200px"></a>
-<form name="client" action="setclient.php" method="post">
-<p>
-<h3>ACL Recursive Clients<br><small>'.$ipaddr.'</small></h3>
-<small>Format: ip_address/cidr per baris, tanpa titik koma (;)<br>warning, jangan asal copas! syntax harus benar</small><br>
-IPv4
-<div class="areatxt2"><textarea rows="10" cols="20" name="data" onkeyup="checkIPList(this);" autofocus="autofocus"'; echo "placeholder='contoh:\n127.0.0.0/8\n192.168.0.0/16\n172.16.0.0/12\n10.0.0.0/8'>";
-foreach($file4 as $text) { echo $text; }
-echo '</textarea></div>';
+echo '<form name="client" action="setclient.php" method="post">';
+echo '<div class="tng-field field"><label>IPv4</label><div class="areatxt2"><textarea rows="10" cols="20" name="data" onkeyup="checkIPList(this);" autofocus="autofocus" placeholder="contoh:
+127.0.0.0/8
+192.168.0.0/16
+172.16.0.0/12
+10.0.0.0/8">';
+foreach($file4 as $text) { echo htmlspecialchars($text, ENT_QUOTES, 'UTF-8'); }
+echo '</textarea></div></div>';
 if ($useip6 == 'yes') { echo '
-IPv6
-<div class="areatxt2"><textarea rows="10" cols="20" name="data6" autofocus="autofocus"'; echo "placeholder='contoh:\n::1/64\n::2/64\n::3/64'>";
-foreach($file6 as $text) { echo $text; }
-echo '</textarea></div>';
+<div class="tng-field field"><label>IPv6</label><div class="areatxt2"><textarea rows="10" cols="20" name="data6" autofocus="autofocus" placeholder="contoh:
+::1/64
+::2/64
+::3/64">';
+foreach($file6 as $text) { echo htmlspecialchars($text, ENT_QUOTES, 'UTF-8'); }
+echo '</textarea></div></div>';
 }
 echo '
-<input type="submit" id="submit" value="Simpan" class="submit-button"/>  <input type="button" onclick="'.$back.'" class="submit-button" value="Kembali">
-</form>
-<p><small><b>&#169; 2024 Kominfo</small></b>
-</div>';
+<div class="form-actions di-actions">
+  <input type="submit" id="submit" value="Simpan" class="submit-button"/>
+  <input type="button" onclick="'.$back.'" class="submit-button button-secondary" value="Kembali">
+</div>
+</form>';
+tng_ui_card_end();
 
-echo '</div></div>';
+echo '<script src="kunci.js"></script>';
+tng_ui_page_end('setclient.php');
 ?>

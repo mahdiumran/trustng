@@ -24,9 +24,9 @@ function trustng_command($command, &$output = null)
 }
 
 $actions = array(
-    'setip6.new' => array('sudo /usr/sbin/sysctl -p', 'sudo /usr/sbin/service networking restart', 'sudo /usr/sbin/service unbound restart'),
-    'setip.new' => array('sudo /usr/sbin/service networking restart', 'sudo /usr/sbin/service sshd restart'),
-    'setalias.new' => array('./setipalias.sh', 'sudo /usr/sbin/service unbound restart'),
+    'setip6.new' => array('sudo -n /usr/sbin/sysctl -p', 'sudo -n /usr/sbin/service networking restart', 'sudo -n /usr/sbin/service unbound restart'),
+    'setip.new' => array('sudo -n /usr/sbin/service networking restart', 'sudo -n /usr/sbin/service sshd restart', 'sudo -n /usr/sbin/service unbound restart'),
+    'setalias.new' => array('./setipalias.sh', 'sudo -n /usr/sbin/service unbound restart'),
 );
 
 $messages = array();
@@ -43,7 +43,7 @@ try {
         foreach ($commands as $command) {
             $output = '';
             $commandOk = trustng_command($command, $output);
-            if (!$commandOk && $output !== '') $messages[] = htmlspecialchars($output, ENT_QUOTES, 'UTF-8');
+            if (!$commandOk && $output !== '') $messages[] = $output;
             $ok = $commandOk && $ok;
         }
         if ($ok) @unlink(__DIR__ . '/' . $flag);
@@ -62,10 +62,10 @@ try {
         if ($conf !== '') {
             $tmpDns = tempnam('/tmp', 'trustng-dns-');
             file_put_contents($tmpDns, $conf);
-            trustng_command('sudo /usr/bin/cp ' . escapeshellarg($tmpDns) . ' /etc/unbound/lamanlabuh.conf');
+            trustng_command('sudo -n /usr/bin/cp ' . escapeshellarg($tmpDns) . ' /etc/unbound/lamanlabuh.conf');
             @unlink($tmpDns);
         }
-        trustng_command('sudo /usr/sbin/service unbound restart');
+        trustng_command('sudo -n /usr/sbin/service unbound restart');
         @unlink(__DIR__ . '/setdns.new');
     }
 
@@ -78,7 +78,7 @@ try {
             $data4 = implode(', ', array_map('trim', $lines4));
             $tmp = tempnam('/tmp', 'trustng-');
             file_put_contents($tmp, "elements = { $data4 }\n");
-            $ok4 = trustng_command('sudo /usr/bin/cp ' . escapeshellarg($tmp) . ' /etc/client_set');
+            $ok4 = trustng_command('sudo -n /usr/bin/cp ' . escapeshellarg($tmp) . ' /etc/client_set');
             @unlink($tmp);
             if (!$ok4) $messages[] = 'Gagal update /etc/client_set';
         }
@@ -88,14 +88,14 @@ try {
             $data6 = implode(', ', array_map('trim', $lines6));
             $tmp6 = tempnam('/tmp', 'trustng6-');
             file_put_contents($tmp6, "elements = { $data6 }\n");
-            $ok6 = trustng_command('sudo /usr/bin/cp ' . escapeshellarg($tmp6) . ' /etc/client6_set');
+            $ok6 = trustng_command('sudo -n /usr/bin/cp ' . escapeshellarg($tmp6) . ' /etc/client6_set');
             @unlink($tmp6);
             if (!$ok6) $messages[] = 'Gagal update /etc/client6_set';
         }
         $outNft = '';
-        $okNft = trustng_command('sudo /usr/sbin/service nftables restart', $outNft);
+        $okNft = trustng_command('sudo -n /usr/sbin/service nftables restart', $outNft);
         if (!$okNft && $outNft !== '') {
-            $messages[] = 'Gagal restart nftables: ' . htmlspecialchars($outNft, ENT_QUOTES, 'UTF-8');
+            $messages[] = 'Gagal restart nftables: ' . $outNft;
         }
         @unlink(__DIR__ . '/setclient.new');
     }
@@ -103,29 +103,35 @@ try {
     if (file_exists(__DIR__ . '/setsnmpd.new')) {
         $enabled = trim(@file_get_contents(__DIR__ . '/setsnmpd')) === 'yes';
         $commands = $enabled
-            ? array('sudo /usr/sbin/systemctl enable snmpd', 'sudo /usr/sbin/service snmpd start')
-            : array('sudo /usr/sbin/service snmpd stop', 'sudo /usr/sbin/systemctl disable snmpd');
+            ? array('sudo -n /usr/sbin/systemctl enable snmpd', 'sudo -n /usr/sbin/service snmpd start')
+            : array('sudo -n /usr/sbin/service snmpd stop', 'sudo -n /usr/sbin/systemctl disable snmpd');
         $ok = true;
         foreach ($commands as $command) {
             $output = '';
             $commandOk = trustng_command($command, $output);
-            if (!$commandOk && $output !== '') $messages[] = htmlspecialchars($output, ENT_QUOTES, 'UTF-8');
+            if (!$commandOk && $output !== '') $messages[] = $output;
             $ok = $commandOk && $ok;
         }
         if ($ok) @unlink(__DIR__ . '/setsnmpd.new');
     }
 } catch (Exception $e) {
-    $messages[] = htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8');
+    $messages[] = $e->getMessage();
 }
 
 flock($lock, LOCK_UN);
 fclose($lock);
-?><!DOCTYPE html>
-<html lang="id"><head><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="15; url=/">
-<link rel="stylesheet" href="style.css"><title>Reload System</title></head>
-<body><main class="system-state"><img class="state-logo" src="img/logo-img/trust-ng.jpg" alt="TRUST-NG">
-<h3>Reload System<br><small><?php echo htmlspecialchars($myip, ENT_QUOTES, 'UTF-8'); ?></small></h3>
-<?php foreach ($messages as $message): ?><p><?php echo $message; ?></p><?php endforeach; ?>
-<p>Konfigurasi service telah diproses. Anda akan diarahkan dalam <span id="countdowntimer">15</span> detik.</p><div class="system-progress" aria-hidden="true"><span id="countdownprogress"></span></div><p><a href="/">Lanjutkan sekarang</a></p>
-<p><small><b>&copy; 2024 Kominfo</b></small></p><script>var timeleft=15,timer=setInterval(function(){timeleft--;document.getElementById('countdowntimer').textContent=timeleft;document.getElementById('countdownprogress').style.width=(timeleft/15*100)+'%';if(timeleft<=0){clearInterval(timer);window.location.href='/';}},1000);</script></main></body></html>
+
+require_once __DIR__ . '/includes/ui.php';
+
+if (count($messages) > 0) {
+    $tone = 'critical';
+    $title = 'Reload selesai dengan peringatan';
+    $message = "Konfigurasi service telah diproses dengan catatan berikut.\n\n" . implode("\n", $messages);
+} else {
+    $tone = 'success';
+    $title = 'Reload Selesai';
+    $message = 'Konfigurasi service telah diproses. Anda akan diarahkan dalam beberapa detik.';
+}
+
+tng_ui_system_state($title, $message, $tone, 15, '/');
+?>

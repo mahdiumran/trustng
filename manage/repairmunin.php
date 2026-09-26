@@ -20,19 +20,13 @@ $status = 1;
 $script = file_exists('/usr/local/sbin/repairmunin.sh')
     ? '/usr/local/sbin/repairmunin.sh'
     : __DIR__ . '/repairmunin.sh';
-exec('sudo ' . escapeshellarg($script) . ' 2>&1', $output, $status);
-$message = $status === 0
+exec('sudo -n ' . escapeshellarg($script) . ' 2>&1', $output, $status);
+$ok = ($status === 0);
+$message = $ok
     ? 'Repair Munin selesai. Grafik akan dibangun kembali dalam beberapa menit.'
     : 'Repair Munin gagal: ' . implode("\n", $output);
+
+require_once __DIR__ . '/includes/ui.php';
+
+tng_ui_system_state('Repair Munin', $message, $ok ? 'success' : 'critical', 15, '/');
 ?>
-<!DOCTYPE html>
-<html lang="id"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<meta http-equiv="refresh" content="15; url=/"/><link rel="stylesheet" href="style.css"/><title>Repair Munin</title></head>
-<body><main class="system-state"><img class="state-logo" src="img/logo-img/trust-ng.jpg" alt="TRUST-NG">
-<h3>Repair Munin<br><small><?php echo htmlspecialchars($myip, ENT_QUOTES, 'UTF-8'); ?></small></h3>
-<p><?php echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'); ?></p>
-<p>Anda akan diarahkan kembali dalam <span id="countdowntimer">15</span> detik.</p>
-<div class="system-progress" aria-hidden="true"><span id="countdownprogress"></span></div>
-<p><a href="/">Lanjutkan sekarang</a></p><p><small><b>&copy; 2024 Kominfo</b></small></p>
-<script>var timeleft=15,timer=setInterval(function(){timeleft--;document.getElementById('countdowntimer').textContent=timeleft;document.getElementById('countdownprogress').style.width=(timeleft/15*100)+'%';if(timeleft<=0){clearInterval(timer);window.location.href='/';}},1000);</script>
-</main></body></html>

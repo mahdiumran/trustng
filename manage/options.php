@@ -1,7 +1,7 @@
-
 <?php
 error_reporting(0);
 require_once __DIR__ . '/includes/auth.php';
+require_once __DIR__ . '/includes/ui.php';
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
 header('Expires: 0');
@@ -44,10 +44,21 @@ $cip6 = file_get_contents('setip6');
 
 $info = '';
 
+function trustng_write_system_file($path, $content)
+{
+    $tmp = tempnam('/tmp', 'trustng-config-');
+    if ($tmp === false || file_put_contents($tmp, $content) === false) return false;
+    $output = array();
+    $status = 1;
+    exec('/usr/bin/sudo -n /usr/bin/cp ' . escapeshellarg($tmp) . ' ' . escapeshellarg($path) . ' 2>&1', $output, $status);
+    @unlink($tmp);
+    return $status === 0;
+}
+
 if($_POST['options'] ?? null) {
     if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !tng_csrf_check($_POST['csrf'] ?? null)) {
         http_response_code(403);
-        $info = 'Permintaan tidak valid. Muat ulang halaman dan coba lagi.';
+        exit(0);
     }
 
     $safe = $_POST['safe'] ?? '';
@@ -58,43 +69,37 @@ if($_POST['options'] ?? null) {
     $ip6 = $_POST['ip6'] ?? '';
 
     if ($info === '') {
-    if ($community == '') $community = 'public';
+    $community = preg_replace('/[^A-Za-z0-9_.-]/', '', (string) $community);
+    if ($community === '') $community = 'public';
+    $snmp_conf = 'agentaddress udp:161' . "\n"
+        . 'rocommunity ' . $community . " 0.0.0.0/0\n\n"
+        . 'agentaddress udp6:161' . "\n"
+        . 'rocommunity6 ' . $community . " ::/0\n";
+    $tmp_snmp = tempnam('/tmp', 'trustng-snmp-');
+    if ($tmp_snmp !== false) {
+        file_put_contents($tmp_snmp, $snmp_conf);
+        shell_exec('sudo -n /usr/bin/cp ' . escapeshellarg($tmp_snmp) . ' /etc/snmp/snmpd.conf 2>/dev/null');
+        @unlink($tmp_snmp);
+    }
     $file = fopen('snmpd.community', 'w');
-    if ($file) { fwrite($file, "$community"); fclose($file); }
-
+    if ($file) { fwrite($file, $community); fclose($file); }
     if ($safe == 'yes' && $csafe == '') {
         $file = fopen('setsafesearch', 'w');
         if ($file) { fwrite($file, 'yes'); fclose($file); }
         $file = fopen('setdns.new', 'w');
         if ($file) { fwrite($file, ''); fclose($file); }
-        $file = fopen('/etc/unbound/module-config.conf', 'w');
-        if ($file) {
-            if ($dnssec != 'no') {
-                fwrite($file, 'module-config: "respip validator iterator"');
-            } else {
-                fwrite($file, 'module-config: "respip iterator"');
-            }
-            fclose($file);
-        }
-        $file = fopen('/etc/unbound/rpz.conf', 'w');
-        if ($file) { fwrite($file, "rpz:\n\tname: rpz.safesearch\n\tzonefile: \"/etc/unbound/rpz.safesearch\""); fclose($file); }
+        $module_config = $dnssec != 'no' ? 'module-config: "respip validator iterator"' : 'module-config: "respip iterator"';
+        trustng_write_system_file('/etc/unbound/module-config.conf', $module_config);
+        trustng_write_system_file('/etc/unbound/rpz.conf', "rpz:\n\tname: rpz.safesearch\n\tzonefile: \"/etc/unbound/rpz.safesearch\"");
 	$info2 = 'Safesearch,';
     } elseif ($safe == '' && $csafe == 'yes') {
         $file = fopen('setsafesearch', 'w');
         if ($file) { fwrite($file, ''); fclose($file); }
         $file = fopen('setdns.new', 'w');
         if ($file) { fwrite($file, ''); fclose($file); }
-        $file = fopen('/etc/unbound/module-config.conf', 'w');
-        if ($file) {
-            if ($dnssec != 'no') {
-                fwrite($file, 'module-config: "validator iterator"');
-            } else {
-                fwrite($file, 'module-config: "iterator"');
-            }
-            fclose($file);
-        }
-        $file = fopen('/etc/unbound/rpz.conf', 'w');
-        if ($file) { fwrite($file, ''); fclose($file); }
+        $module_config = $dnssec != 'no' ? 'module-config: "validator iterator"' : 'module-config: "iterator"';
+        trustng_write_system_file('/etc/unbound/module-config.conf', $module_config);
+        trustng_write_system_file('/etc/unbound/rpz.conf', '');
         $info2 = 'Safesearch,';
     }
 
@@ -104,15 +109,14 @@ if($_POST['options'] ?? null) {
         $file = fopen('setclient.new', 'w');
         if ($file) { fwrite($file, ''); fclose($file); }
         $info3 = 'Tproxy';
-	shell_exec("/usr/bin/cp /etc/tproxy.conf.new /etc/tproxy.conf");
+	trustng_write_system_file('/etc/tproxy.conf', (string) @file_get_contents('/etc/tproxy.conf.new'));
     } elseif ($tproxy == '' && $ctproxy == 'yes') {
         $file = fopen('settproxy', 'w');
         if ($file) { fwrite($file, ''); fclose($file); }
         $file = fopen('setclient.new', 'w');
         if ($file) { fwrite($file, ''); fclose($file); }
         $info3 = 'Tproxy';
-        $file = fopen('/etc/tproxy.conf', 'w');
-        if ($file) { fwrite($file, ''); fclose($file); }
+        trustng_write_system_file('/etc/tproxy.conf', '');
     }
     if ($dnssec != 'no' && $cdnssec != 'yes') {
         $file = fopen('setdnssec', 'w');
@@ -120,15 +124,8 @@ if($_POST['options'] ?? null) {
         $file = fopen('setdns.new', 'w');
         if ($file) { fwrite($file, ''); fclose($file); }
         $info4 = 'Dnssec';
-        $file = fopen('/etc/unbound/module-config.conf', 'w');
-	if ($file) {
-	    if ($safe == 'yes') {
-                fwrite($file, 'module-config: "respip validator iterator"');
-	    } else {
-                fwrite($file, 'module-config: "validator iterator"');
-	    }
-            fclose($file);
-	}
+        $module_config = $safe == 'yes' ? 'module-config: "respip validator iterator"' : 'module-config: "validator iterator"';
+        trustng_write_system_file('/etc/unbound/module-config.conf', $module_config);
 
     } elseif ($dnssec == 'no' && $cdnssec != 'no') {
         $file = fopen('setdnssec', 'w');
@@ -136,18 +133,10 @@ if($_POST['options'] ?? null) {
         $file = fopen('setdns.new', 'w');
         if ($file) { fwrite($file, ''); fclose($file); }
         $info4 = 'Dnssec';
-        $file = fopen('/etc/unbound/module-config.conf', 'w');
-        if ($file) {
-            if ($safe == 'yes') {
-                fwrite($file, 'module-config: "respip iterator"');
-            } else {
-                fwrite($file, 'module-config: "iterator"');
-            }
-            fclose($file);
-        }
+        $module_config = $safe == 'yes' ? 'module-config: "respip iterator"' : 'module-config: "iterator"';
+        trustng_write_system_file('/etc/unbound/module-config.conf', $module_config);
     }
 
-    `printf "agentaddress udp:161\nrocommunity $community 0.0.0.0/0\n\nagentaddress udp6:161\nrocommunity6 $community ::/0\n" > /etc/snmp/snmpd.conf`;
     if ($snmpd == 'yes'&& $csnmpd != 'yes') {
         $file = fopen('setsnmpd', 'w');
         if ($file) { fwrite($file, 'yes'); fclose($file); }
@@ -166,18 +155,18 @@ if($_POST['options'] ?? null) {
         $file = fopen('setip6.new', 'w');
         if ($file) { fwrite($file, ''); fclose($file); }
         $info6 = 'Ip6';
-	shell_exec('sudo sed -i "s/do-ip6: no/do-ip6: yes/" /etc/unbound/unbound.conf');
-	`sudo sed -i 's/ = 1/ = 0/' /etc/sysctl.conf`;
-	`sudo sed -i 's/lo.disable_ipv6 = 1/lo.disable_ipv6 = 0/' /etc/sysctl.conf`;
+	shell_exec('sudo -n sed -i "s/do-ip6: no/do-ip6: yes/" /etc/unbound/unbound.conf');
+	`sudo -n sed -i 's/ = 1/ = 0/' /etc/sysctl.conf`;
+	`sudo -n sed -i 's/lo.disable_ipv6 = 1/lo.disable_ipv6 = 0/' /etc/sysctl.conf`;
     } elseif ($ip6 != 'yes' && $cip6 == 'yes') {
         $file = fopen('setip6', 'w');
         if ($file) { fwrite($file, 'no'); fclose($file); }
         $file = fopen('setip6.new', 'w');
         if ($file) { fwrite($file, ''); fclose($file); }
         $info6 = 'Ip6';
-        shell_exec('sudo sed -i "s/do-ip6: yes/do-ip6: no/" /etc/unbound/unbound.conf');
-        `sudo sed -i 's/ = 0/ = 1/' /etc/sysctl.conf`;
-        `sudo sed -i 's/lo.disable_ipv6 = 1/lo.disable_ipv6 = 0/' /etc/sysctl.conf`;
+        shell_exec('sudo -n sed -i "s/do-ip6: yes/do-ip6: no/" /etc/unbound/unbound.conf');
+        `sudo -n sed -i 's/ = 0/ = 1/' /etc/sysctl.conf`;
+        `sudo -n sed -i 's/lo.disable_ipv6 = 1/lo.disable_ipv6 = 0/' /etc/sysctl.conf`;
     }
 
     if ( ($info2 ?? '') != '' || ($info3 ?? '') != '' || ($info4 ?? '') != '' || ($info6 ?? '') != '') {
@@ -228,68 +217,44 @@ if (strpos($referer, $allowed_prefix) !== 0 && strpos($referer, $allowed_prefix_
         }
 }
 
-echo '<!DOCTYPE html>
-<html lang="id">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" type="text/css" href="style.css" />
-<title>DNS TRUST-NG - OPTIONS</title>
-<script src="kunci.js"></script>
-</head>
-<body class="with-sidebar sidebar-collapsed">
-<div id="sidebar-overlay"></div>
-<div class="page-shell">';
-include_once 'menu.php';
-trustng_render_sidebar('options.php');
+tng_ui_page_start('options.php', 'Options', 'Validasi, IPv6, dan monitoring resolver. IP referensi: ' . trim($ipaddr));
 
-echo '<div class="page-content">';
-echo '<div class="tng-topbar"><button class="tng-topbar-toggle" title="Toggle menu" aria-label="Toggle menu"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="4.5" width="16" height="2" rx="1" fill="currentColor"/><rect x="2" y="9" width="16" height="2" rx="1" fill="currentColor"/><rect x="2" y="13.5" width="16" height="2" rx="1" fill="currentColor"/></svg></button><span class="tng-topbar-title">Options</span><div class="tng-topbar-spacer"></div><a class="tng-topbar-back" href="/">&#8592; Dashboard</a></div>';
-//include 'submit.js';
-echo'
-<div align=center>
-<a href="/"><img src="img/trustng-small.jpg" width="200px"></a>
-<p>
-<h3>Options<br><small>'.$ipaddr.'</small></h3>
-<form name="ports" action="options.php" method="post">
+if ($info !== '') {
+    tng_ui_notice('success', 'Perubahan tersimpan', $info);
+}
+
+tng_ui_card_start('Akses & Keamanan', 'Validasi dan keamanan resolver DNS.');
+echo '<form name="ports" action="options.php" method="post">
 <input type="hidden" name="options" value="submit">
 <input type="hidden" name="csrf" value="'.htmlspecialchars(tng_csrf_token(), ENT_QUOTES, 'UTF-8').'">
-'.($info !== '' ? '<p class="notice">'.htmlspecialchars($info, ENT_QUOTES, 'UTF-8').'</p>' : '').'
-
 <div class="set-section">
-  <div class="set-section-head"><span class="set-section-title">Akses &amp; Keamanan</span></div>
-  <p class="set-section-desc">Validasi dan keamanan resolver DNS.</p>
-
   <div class="set-row">
     <div class="set-row-info">
-      <span class="set-row-name">Safesearch</span>
+      <span class="set-row-name" id="safe-label">Safesearch</span>
       <span class="set-row-desc">Paksa Safesearch pada Google, Bing, Yandex, dan DuckDuckGo.</span>
     </div>
     <div class="set-row-control">
-      <label class="tng-switch"><input type="checkbox" name="safe" value="yes" '.$safe.'><span class="tng-switch-track"></span></label>
+      <label class="tng-switch"><input type="checkbox" name="safe" value="yes" aria-labelledby="safe-label" '.$safe.'><span class="tng-switch-track"></span></label>
     </div>
   </div>
 
   <div class="set-row">
     <div class="set-row-info">
-      <span class="set-row-name">DNSSEC</span>
+      <span class="set-row-name" id="dnssec-label">DNSSEC</span>
       <span class="set-row-desc">Geser untuk menonaktifkan validasi DNSSEC (dapat bermasalah dengan Safesearch / Forwarder / Hosts).</span>
     </div>
     <div class="set-row-control">
-      <label class="tng-switch"><input type="checkbox" name="dnssec" value="no" '.$dnssec.'><span class="tng-switch-track"></span></label>
+      <label class="tng-switch"><input type="checkbox" name="dnssec" value="no" aria-labelledby="dnssec-label" '.$dnssec.'><span class="tng-switch-track"></span></label>
     </div>
   </div>
 
   <div class="set-row">
     <div class="set-row-info">
-      <span class="set-row-name">Tproxy</span>
+      <span class="set-row-name" id="tproxy-label">Tproxy</span>
       <span class="set-row-desc">Transparent DNS Server pada tcp/udp port 53.</span>
     </div>
     <div class="set-row-control">
-      <label class="tng-switch"><input type="checkbox" name="tproxy" value="yes" '.$tproxy.'><span class="tng-switch-track"></span></label>
+      <label class="tng-switch"><input type="checkbox" name="tproxy" value="yes" aria-labelledby="tproxy-label" '.$tproxy.'><span class="tng-switch-track"></span></label>
     </div>
   </div>
 </div>
@@ -300,31 +265,13 @@ echo'
 
   <div class="set-row">
     <div class="set-row-info">
-      <span class="set-row-name">IPv6</span>
+      <span class="set-row-name" id="ipv6-label">IPv6</span>
       <span class="set-row-desc">Dukungan IPv6 dual stack. Jika enable, wajib diisi di halaman IP Address.</span>
     </div>
     <div class="set-row-control">
-      <label class="tng-switch"><input type="checkbox" name="ip6" value="yes" '.$ip6.'><span class="tng-switch-track"></span></label>
+      <label class="tng-switch"><input type="checkbox" name="ip6" value="yes" aria-labelledby="ipv6-label" '.$ip6.'><span class="tng-switch-track"></span></label>
     </div>
   </div>
-
-  <noscript>
-  <div class="set-row">
-    <div class="set-row-info">
-      <span class="set-row-name">Unbound Threads</span>
-      <span class="set-row-desc">Jumlah thread Unbound (default 4).</span>
-    </div>
-    <div class="set-row-control">
-      <select name="thread" id="thr" required style="margin:0;">
-        <option value="4" disabled selected>default</option>
-        <option value="1" '.$select1.'>1</option>
-        <option value="2" '.$select2.'>2</option>
-        <option value="4" '.$select3.'>4</option>
-        <option value="5" '.$select4.'>8</option>
-      </select>
-    </div>
-  </div>
-  </noscript>
 </div>
 
 <div class="set-section">
@@ -333,33 +280,32 @@ echo'
 
   <div class="set-row">
     <div class="set-row-info">
-      <span class="set-row-name">SNMPD</span>
+      <span class="set-row-name" id="snmp-label">SNMPD</span>
       <span class="set-row-desc">Aktifkan layanan SNMP untuk Cacti, PRTG, MRTG, dll.</span>
     </div>
     <div class="set-row-control">
-      <label class="tng-switch"><input type="checkbox" name="snmpd" value="yes" '.$snmpd.'><span class="tng-switch-track"></span></label>
+      <label class="tng-switch"><input type="checkbox" name="snmpd" value="yes" aria-labelledby="snmp-label" '.$snmpd.'><span class="tng-switch-track"></span></label>
     </div>
   </div>
 
   <div class="set-row">
     <div class="set-row-info">
-      <span class="set-row-name">Community</span>
+      <span class="set-row-name"><label for="snmp-community">Community</label></span>
       <span class="set-row-desc">String community SNMP (default: public).</span>
     </div>
     <div class="set-row-control">
-      <input type="text" name="community" value="'.htmlspecialchars($community).'" placeholder="public" style="width:160px;margin:0;" />
+      <input id="snmp-community" class="compact-input" type="text" name="community" value="'.tng_e($community).'" placeholder="public" />
     </div>
   </div>
 </div>
 
-<div class="di-actions">
+<div class="form-actions di-actions">
   <input type="submit" id="submit" value="Simpan" class="submit-button"/>
-  <a class="submit-button" href="/">Kembali</a>
+  <a class="submit-button button-secondary" href="/">Kembali</a>
 </div>
-</form>
-<p><small><b>&#169; 2024 Kominfo</b></small>
-</div>';
+</form>';
+tng_ui_card_end();
 
-
-echo '</div></div>';
+echo '<script src="kunci.js"></script>';
+tng_ui_page_end('options.php');
 ?>

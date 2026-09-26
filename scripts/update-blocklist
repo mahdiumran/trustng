@@ -160,14 +160,16 @@ run_process() {
     # ---- Health check
     sleep 2
     HEALTH="OK"
-    testdomain=$(grep -m1 -E '^[a-z0-9]' "$TRUST_TXT" 2>/dev/null || head -n1 "$TRUST_TXT")
-    blocked_answer=$(dig +short +time=3 +tries=1 "@$HEALTHCHECK_SERVER" -p "$HEALTHCHECK_PORT" "$testdomain" A | head -n1)
-    lp_ip=$(grep '^local-data: "blacklist\. 60 IN A' /etc/unbound/lamanlabuh.conf 2>/dev/null | head -n1 | sed 's/.*IN A \([0-9.]*\)".*/\1/')
-    if [ -z "$blocked_answer" ] || { [ -n "$lp_ip" ] && [ "$blocked_answer" != "$lp_ip" ]; }; then
-        HEALTH="BLOCK-CHECK-FAIL($testdomain=$blocked_answer,expect=$lp_ip)"
+    if [ "${SKIP_HEALTHCHECK:-0}" != "1" ]; then
+        testdomain=$(grep -m1 -E '^[a-z0-9]' "$TRUST_TXT" 2>/dev/null || head -n1 "$TRUST_TXT")
+        blocked_answer=$(dig +short +time=3 +tries=1 "@$HEALTHCHECK_SERVER" -p "$HEALTHCHECK_PORT" "$testdomain" A | head -n1)
+        lp_ip=$(grep '^local-data: "blacklist\. 60 IN A' /etc/unbound/lamanlabuh.conf 2>/dev/null | head -n1 | sed 's/.*IN A \([0-9.]*\)".*/\1/')
+        if [ -z "$blocked_answer" ] || { [ -n "$lp_ip" ] && [ "$blocked_answer" != "$lp_ip" ]; }; then
+            HEALTH="BLOCK-CHECK-FAIL($testdomain=$blocked_answer,expect=$lp_ip)"
+        fi
+        allowed=$(dig +short +time=3 +tries=1 "@$HEALTHCHECK_SERVER" -p "$HEALTHCHECK_PORT" example.com A | head -n1)
+        [ -z "$allowed" ] && HEALTH="$HEALTH ALLOW-CHECK-FAIL"
     fi
-    allowed=$(dig +short +time=3 +tries=1 "@$HEALTHCHECK_SERVER" -p "$HEALTHCHECK_PORT" example.com A | head -n1)
-    [ -z "$allowed" ] && HEALTH="$HEALTH ALLOW-CHECK-FAIL"
 
     {
         echo "========================================"

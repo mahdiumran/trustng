@@ -57,20 +57,23 @@ function tng_record_attempt($ip, $ok) {
 
 function tng_get_user($username) {
     $db = tng_db();
-    $st = $db->prepare('SELECT username, password_hash, pw_version FROM users WHERE username=?');
+    $st = $db->prepare('SELECT username, password_hash, pw_version, updated_at FROM users WHERE username=?');
     $st->execute(array($username));
     return $st->fetch(PDO::FETCH_ASSOC);
 }
 
 function tng_set_password($username, $password) {
     $db = tng_db();
-    $hash = password_hash($password, PASSWORD_DEFAULT); // Argon2id di PHP 8.x
-    $db->exec('INSERT INTO users(username, password_hash, pw_version, updated_at) '
-        . "VALUES('" . SQLite3::escapeString($username) . "', '" . SQLite3::escapeString($hash)
-        . "', COALESCE((SELECT pw_version+1 FROM users WHERE username='"
-        . SQLite3::escapeString($username) . "'), 1), " . time() . ')'
-        . " ON CONFLICT(username) DO UPDATE SET password_hash='" . SQLite3::escapeString($hash)
-        . "', pw_version=pw_version+1, updated_at=" . time());
+    $hash = password_hash($password, PASSWORD_DEFAULT);
+    if ($hash === false) return false;
+    $now = time();
+    $st = $db->prepare('INSERT INTO users(username, password_hash, pw_version, updated_at) '
+        . 'VALUES(?, ?, COALESCE((SELECT pw_version+1 FROM users WHERE username=?), 1), ?) '
+        . 'ON CONFLICT(username) DO UPDATE SET password_hash=excluded.password_hash, '
+        . 'pw_version=users.pw_version+1, updated_at=excluded.updated_at');
+    if (!$st || !$st->execute(array($username, $hash, $username, $now))) return false;
+    $user = tng_get_user($username);
+    return $user && hash_equals($hash, $user['password_hash']);
 }
 
 function tng_current_pw_version() {

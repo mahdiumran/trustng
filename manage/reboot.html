@@ -1,24 +1,11 @@
-<html>
-<head>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<!DOCTYPE html>
+<html lang="id"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
 <meta http-equiv="refresh" content="60; url=/">
-<link rel="stylesheet" type="text/css" href="style.css" />
-<script type="text/javascript">
-    var timeleft = 60;
-    var downloadTimer = setInterval(function(){
-    timeleft--;
-    document.getElementById("countdowntimer").textContent = timeleft;
-    if(timeleft <= 0)
-        clearInterval(downloadTimer);
-    },1000);
-</script>
-</head>
-<body>
-<main class="system-state">
-<img class="state-logo" src="img/logo-img/trust-ng.jpg" alt="TRUST-NG">
-<?php echo "<h3>Reboot System<br><small>$myip</small></h3>"; ?>
-<p>
-<h4>Mohon ditunggu, ...</h4>
-<span id="countdowntimer">60</span>
-<p><small><b>&#169; 2024 Kominfo</b></small>
-</main>
+<link rel="stylesheet" href="style.css"><title>Reboot System</title></head>
+<body class="system-state-page"><main class="system-state"><section class="system-state-card">
+<span class="system-state-icon tone-critical"><i class="fa-solid fa-server" aria-hidden="true"></i></span>
+<span class="kicker">SYSTEM ACTION</span><h1>Reboot System</h1>
+<p>Mohon ditunggu, sistem sedang reboot. Anda akan diarahkan kembali dalam beberapa detik.</p>
+<div class="countdown" data-countdown="60" data-target="/"><strong id="countdownValue">60</strong><span>detik</span></div><div class="progress"><span id="countdownProgress"></span></div>
+<a class="button button-secondary" href="/">Kembali ke dashboard</a>
+</section></main><script src="menu.js"></script></body></html>

@@ -21,7 +21,7 @@ manage/                      ← project root (git repo)
 │   ├── *.php                ← backend pages & AJAX endpoints
 │   ├── *.js                 ← frontend (jQuery + Canvas charts)
 │   ├── *.sh                 ← shell scripts untuk apply config Unbound
-│   ├── style.css            ← design system "NEXUS COMMAND"
+│   ├── style.css            ← design system clean M2C/Ingat.in
 │   ├── img/                 ← logo & image assets
 │   ├── includes/            ← auth.php, auth_guard.php, port_config.php, state_store.php
 │   └── *.data, *.dig, ...  ← runtime state (tidak di-commit)
@@ -47,10 +47,9 @@ manage/                      ← project root (git repo)
 ├── systemd/                 ← systemd unit files
 │   ├── unbound-override.conf
 │   ├── update-blocklist.service
-│   └── update-blocklist.timer
-│
-├── installer/               ← installer helper scripts
-├── templates/               ← default template files
+│   ├── update-blocklist.timer
+│   ├── trustng-metrics.service
+│   └── trustng-metrics.timer
 ├── docs/                    ← documentation
 │   ├── deployment.md
 │   └── release-checklist.md
@@ -85,6 +84,15 @@ openssl
 adduser
 passwd
 sqlite3
+sudo
+iproute2
+net-tools
+util-linux
+bc
+lm-sensors
+snmpd
+openssh-server
+procps
 libevent-2.1-7
 libevent-core
 libevent-dev
@@ -136,7 +144,7 @@ Installer akan:
 # Remote update via SSH
 REMOTE=server-ip ./update.sh all
 
-# Mode: all | binary | config | web | web-changed | blocklist
+# Mode: all | binary | config | scripts | web | web-changed | blocklist
 ./update.sh web
 ```
 

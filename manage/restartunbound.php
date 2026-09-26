@@ -17,22 +17,16 @@ if (!is_array($refererParts) || ($refererParts['scheme'] ?? '') !== 'https'
 
 $output = array();
 $status = 1;
-exec('sudo /usr/sbin/service unbound restart 2>&1', $output, $status);
-$message = $status === 0
+exec('sudo -n /usr/sbin/service unbound restart 2>&1', $output, $status);
+$ok = ($status === 0);
+$message = $ok
     ? 'Unbound berhasil direstart.'
     : 'Gagal me-restart Unbound: ' . implode("\n", $output);
-$ok = ($status === 0);
+if (!$ok && $status === 1 && strpos(implode("\n", $output), 'password') !== false) {
+    $message .= "\n\nPastikan aturan sudo NOPASSWD untuk www-data terpasang (install.sh / update.sh) dan PHP-FPM sudah direstart.";
+}
+
+require_once __DIR__ . '/includes/ui.php';
+
+tng_ui_system_state('Restart Unbound', $message, $ok ? 'success' : 'critical', 15, '/');
 ?>
-<!DOCTYPE html>
-<html lang="id"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<meta http-equiv="refresh" content="15; url=/"/>
-<title>Restart Unbound</title><link rel="stylesheet" href="style.css"/></head>
-<body><main class="system-state"><img class="state-logo" src="img/logo-img/trust-ng.jpg" alt="TRUST-NG">
-<h3>Restart Unbound<br><small><?php echo htmlspecialchars($myip, ENT_QUOTES, 'UTF-8'); ?></small></h3>
-<p><?php echo $ok ? '<span class="badge-ok">' : '<span class="badge-err">'; echo htmlspecialchars($message, ENT_QUOTES, 'UTF-8'); echo '</span>'; ?></p>
-<div class="system-progress" aria-hidden="true"><span id="countdownprogress"></span></div>
-<p>Anda akan diarahkan kembali dalam <span id="countdowntimer">15</span> detik</p>
-<p><a href="/">Lanjutkan sekarang</a></p>
-<p><small><b>&copy; 2024 Kominfo</b></small></p>
-<script>var timeleft=15,timer=setInterval(function(){timeleft--;document.getElementById("countdowntimer").textContent=timeleft;document.getElementById("countdownprogress").style.width=(timeleft/15*100)+"%";if(timeleft<=0){clearInterval(timer);window.location.href="/";}},1000);</script>
-</main></body></html>

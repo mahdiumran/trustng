@@ -3,13 +3,13 @@ var DB_MODE = 'keyword';
 
 function dbSetMode(m) {
   DB_MODE = m;
-  $('.db-mode').removeClass('active');
-  $('.db-mode[data-mode="' + m + '"]').addClass('active');
+  $('.db-mode').removeClass('active').addClass('button-secondary').attr('aria-pressed', 'false');
+  $('.db-mode[data-mode="' + m + '"]').addClass('active').removeClass('button-secondary').attr('aria-pressed', 'true');
   $('#db-mode-label').text('Mode: ' + (m === 'domain' ? 'Domain' : 'Keyword'));
   $('#db-hint').text(m === 'domain'
     ? 'Cek apakah domain (atau induknya) terdaftar di blocklist CDB.'
     : 'Cari kata kunci di dalam daftar Trust+ (maks 500 hasil).');
-  $('#db-results').html('<div class="di-empty">Masukkan kata kunci atau domain lalu tekan Cari.</div>');
+  $('#db-results').html('<div class="empty-state"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><span>Masukkan kata kunci atau domain lalu tekan Cari.</span></div>');
 }
 
 function dbEsc(s) {
@@ -20,8 +20,8 @@ function dbEsc(s) {
 
 function dbRenderKeyword(data) {
   var box = $('#db-results');
-  if (!data.ok) { box.html('<div class="di-empty">' + dbEsc(data.error || 'Gagal') + '</div>'); return; }
-  if (!data.results.length) { box.html('<div class="di-empty">Tidak ada hasil untuk "' + dbEsc(data.query) + '".</div>'); return; }
+  if (!data.ok) { box.html('<div class="error-state"><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i><span>' + dbEsc(data.error || 'Gagal') + '</span></div>'); return; }
+  if (!data.results.length) { box.html('<div class="empty-state"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><span>Tidak ada hasil untuk "' + dbEsc(data.query) + '".</span></div>'); return; }
   var html = '<div class="di-server" style="margin-bottom:8px">' + data.total + ' hasil (maks 500)</div>';
   for (var i = 0; i < data.results.length; i++) {
     html += '<div class="di-row"><span class="di-dot"></span>' +
@@ -33,7 +33,7 @@ function dbRenderKeyword(data) {
 
 function dbRenderDomain(data) {
   var box = $('#db-results');
-  if (!data.ok) { box.html('<div class="di-empty">' + dbEsc(data.error || 'Gagal') + '</div>'); return; }
+  if (!data.ok) { box.html('<div class="error-state"><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i><span>' + dbEsc(data.error || 'Gagal') + '</span></div>'); return; }
   var st = data.found ? 'found' : 'notfound';
   var stTxt = data.found ? 'DITEMUKAN' : 'TIDAK DITEMUKAN';
   var recs = [];
@@ -45,7 +45,7 @@ function dbRenderDomain(data) {
     '<span class="di-recs">';
   if (data.found) html += 'cocok: ' + dbEsc(data.matched);
   else html += 'tidak ada di blocklist';
-  if (recs.length) html += ' &middot; ' + dbEsc(recs.join(' &middot; '));
+  if (recs.length) html += ' · ' + dbEsc(recs.join(' · '));
   html += '</span></div>';
   box.html(html);
 }
@@ -53,7 +53,7 @@ function dbRenderDomain(data) {
 function dbRun() {
   var q = $('#dbQ').val();
   var box = $('#db-results');
-  box.html('<div class="di-empty">Mencari…</div>');
+  box.html('<div class="loading-state"><i class="fa-solid fa-circle-notch fa-spin" aria-hidden="true"></i><span>Mencari&hellip;</span></div>');
   $.ajax({
     url: 'dbtrust_data.php',
     method: 'POST',
@@ -62,7 +62,7 @@ function dbRun() {
   }).done(function (data) {
     if (DB_MODE === 'domain') dbRenderDomain(data); else dbRenderKeyword(data);
   }).fail(function () {
-    box.html('<div class="di-empty">Gagal mengambil data.</div>');
+    box.html('<div class="error-state"><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i><span>Gagal mengambil data.</span></div>');
   });
 }
 

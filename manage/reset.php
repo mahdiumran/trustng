@@ -15,29 +15,32 @@ if (!is_array($refererParts) || ($refererParts['scheme'] ?? '') !== 'https'
     exit('Permintaan reset tidak valid');
 }
 
-echo '<!DOCTYPE html>
-<html lang="id"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<meta http-equiv="refresh" content="15; url=/login.php"/><title>Reset System</title><link rel="stylesheet" href="style.css"/></head>
-<body><main class="system-state"><img class="state-logo" src="img/logo-img/trust-ng.jpg" alt="TRUST-NG">
-<h3>Reset System<br><small>' . htmlspecialchars($myip, ENT_QUOTES, 'UTF-8') . '</small></h3>
-<h4>Mohon ditunggu, sistem sedang me-reset ke default...</h4>
-<div class="system-progress" aria-hidden="true"><span id="countdownprogress"></span></div>
-<p>Anda akan diarahkan ke halaman login dalam <span id="countdowntimer">15</span> detik</p>
-<p><a href="/login.php">Lanjutkan sekarang</a></p><p><small><b>&copy; 2024 Kominfo</b></small></p>
-<script>var timeleft=15,timer=setInterval(function(){timeleft--;document.getElementById("countdowntimer").textContent=timeleft;document.getElementById("countdownprogress").style.width=(timeleft/15*100)+"%";if(timeleft<=0){clearInterval(timer);window.location.href="/login.php";}},1000);</script>
-</main></body></html>';
+require_once __DIR__ . '/includes/ui.php';
+require_once __DIR__ . '/includes/auth.php';
+
+function trustng_reset_system_file($path, $content)
+{
+    $tmp = tempnam('/tmp', 'trustng-reset-');
+    if ($tmp === false || file_put_contents($tmp, $content) === false) return false;
+    $output = array();
+    $status = 1;
+    exec('/usr/bin/sudo -n /usr/bin/cp ' . escapeshellarg($tmp) . ' ' . escapeshellarg($path) . ' 2>&1', $output, $status);
+    @unlink($tmp);
+    return $status === 0;
+}
+
+tng_ui_system_state('Reset System', 'Mohon ditunggu, sistem sedang me-reset ke default. Anda akan diarahkan ke halaman login dalam beberapa detik.', 'critical', 15, '/login.php');
 @ob_flush(); @flush();
 
-shell_exec("echo \"auto lo\niface lo inet loopback\n\nallow-hotplug eth0\niface eth0 inet dhcp\n\nauto eth0:0\niface eth0:0 inet static\naddress 192.168.168.168/24\n\" > /etc/network/interfaces");
-shell_exec("echo local-data: \'blacklist. 60 IN A 10.150.1.18\' > /etc/unbound/lamanlabuh.conf");
-shell_exec("echo local-data: \'blacklist. 60 IN AAAA 2a0f:85c1:8b9:600::18\' >> /etc/unbound/lamanlabuh.conf");
-shell_exec("./resetmunin.sh");
+trustng_reset_system_file('/etc/network/interfaces', "auto lo\niface lo inet loopback\n\nallow-hotplug eth0\niface eth0 inet dhcp\n\nauto eth0:0\niface eth0:0 inet static\naddress 192.168.168.168/24\n");
+trustng_reset_system_file('/etc/unbound/lamanlabuh.conf', "local-data: \"blacklist. 60 IN A 10.150.1.18\"\nlocal-data: \"blacklist. 60 IN AAAA 2a0f:85c1:8b9:600::18\"\n");
+exec('/usr/bin/sudo -n /usr/local/sbin/resetmunin.sh 2>&1');
 
 $file = fopen('clients.ip', 'w');
 fwrite($file, "127.0.0.0/8\n192.168.0.0/16\n172.16.0.0/12\n10.0.0.0/8");
 fclose($file);
-shell_exec("echo \"elements = { 127.0.0.0/8, 192.168.0.0/16, 172.16.0.0/12, 10.0.0.0/8 }\" > /etc/client_set");
-shell_exec("echo \"elements = { ::1/128 }\" > /etc/client6_set");
+trustng_reset_system_file('/etc/client_set', "elements = { 127.0.0.0/8, 192.168.0.0/16, 172.16.0.0/12, 10.0.0.0/8 }\n");
+trustng_reset_system_file('/etc/client6_set', "elements = { ::1/128 }\n");
 
 $file = fopen('lp1.ip', 'w');
 fwrite($file, '10.150.1.18');
@@ -64,9 +67,7 @@ $file = fopen('ip6auto', 'w');
 fwrite($file, 'no');
 fclose($file);
 
-$file = fopen('/etc/unbound/module-config.conf', 'w');
-fwrite($file, 'module-config: "validator iterator"');
-fclose($file);
+trustng_reset_system_file('/etc/unbound/module-config.conf', 'module-config: "validator iterator"');
 
 include 'htpasswd.php';
 
@@ -79,23 +80,23 @@ $file = fopen('.htpasswd', 'w');
 fwrite($file, "$username:$encrypted_password");
 fclose($file);
 
-$file = fopen('setup.mulai', 'w');
+$file = fopen(TNG_SETUP_FLAG, 'w');
 fwrite($file, "ini file utk mulai");
 fclose($file);
-shell_exec("echo admin:$password | sudo /usr/sbin/chpasswd");
+shell_exec("echo admin:$password | sudo -n /usr/sbin/chpasswd");
 sleep (0.3);
-shell_exec('sudo /usr/sbin/service sshd restart');
+shell_exec('sudo -n /usr/sbin/service sshd restart');
 sleep (0.3);
-shell_exec('sudo /usr/sbin/service snmpd stop');
+shell_exec('sudo -n /usr/sbin/service snmpd stop');
 sleep (0.3);
-shell_exec('sudo /usr/sbin/systemctl disable snmpd');
+shell_exec('sudo -n /usr/sbin/systemctl disable snmpd');
 sleep (0.3);
 shell_exec("./setipalias.sh");
 sleep (0.3);
-shell_exec('sudo /usr/sbin/service nftables restart');
+shell_exec('sudo -n /usr/sbin/service nftables restart');
 sleep (0.3);
-shell_exec('sudo  /usr/sbin/sysctl -p');
+shell_exec('sudo -n  /usr/sbin/sysctl -p');
 sleep (0.3);
-shell_exec('sudo /usr/sbin/service unbound restart');
+shell_exec('sudo -n /usr/sbin/service unbound restart');
 
 exit(0);

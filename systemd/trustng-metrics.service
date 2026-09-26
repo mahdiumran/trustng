@@ -1,0 +1,9 @@
+[Unit]
+Description=TRUST-NG metrics sampler (Unbound stats to SQLite)
+After=unbound.service
+
+[Service]
+Type=oneshot
+User=www-data
+ExecStart=/usr/local/sbin/trustng-metrics-sampler
+Nice=10

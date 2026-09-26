@@ -1,5 +1,7 @@
 ﻿<?php
 require_once __DIR__ . '/includes/state_store.php';
+require_once __DIR__ . '/includes/ui.php';
+require_once __DIR__ . '/includes/auth.php';
 error_reporting(0);
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
@@ -10,70 +12,67 @@ $http_host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : "$myip:40443
 $proto = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
 $allowed_prefix = "$proto://$http_host/";
 $allowed_prefix_ip = "https://$myip:40443/";
+if (strpos($referer, $allowed_prefix) !== 0 && strpos($referer, $allowed_prefix_ip) !== 0) {
+    http_response_code(403);
+    exit(0);
+}
 
-if($_POST['data'] ?? null) {
+if (array_key_exists('data', $_POST)) {
+    if (!tng_csrf_check($_POST['csrf'] ?? '')) {
+        http_response_code(403);
+        exit(0);
+    }
     $data = $_POST['data'] ?? '';
-    trustng_state_write('whitelist.db', $data);
-    shell_exec('dos2unix ' . escapeshellarg(trustng_state_path('whitelist.db')));
-    trustng_state_write('setdns.new', '');
-    trustng_run_panel_script('setwhitelist.sh');
-    sleep (0.3);
-    header('location: setwhite.php');
-}
-
-if ($referer != "https://$myip:40443/" && $referer != "https://$myip:40443/index.php") {
-        if (!isset($index) || $index !== 'yes') {
-            if (strpos($referer, $allowed_prefix) !== 0 && strpos($referer, $allowed_prefix_ip) !== 0) exit(0);
+    $valid = true;
+    foreach (preg_split('/\r\n|\r|\n/', $data) as $line) {
+        $line = strtolower(trim($line));
+        if ($line === '' || $line[0] === '#') continue;
+        if (strlen($line) > 253 || !preg_match('/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$/', $line)) {
+            $error = 'Domain tidak valid: ' . $line;
+            $valid = false;
+            break;
         }
+    }
+    if ($valid) {
+        trustng_state_write('whitelist.db', $data);
+        shell_exec('dos2unix ' . escapeshellarg(trustng_state_path('whitelist.db')));
+        trustng_state_write('setdns.new', '');
+        trustng_run_panel_script('setwhitelist.sh');
+        header('Location: setwhite.php?saved=1');
+        exit(0);
+    }
 }
 
-$file = file("whitelist.db");
-echo '<html>
-<head>
-<meta http-equiv="X-UA-Compatible" content="IE=edge"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" type="text/css" href="style.css" />
-<title>DNS TRUST-NG - WHITELIST</title>
-<script src="/jquery.min.js"></script>
-</head>
-<body class="with-sidebar sidebar-collapsed">
-<div id="sidebar-overlay"></div>
-<div class="page-shell">';
-include_once 'menu.php';
-trustng_render_sidebar('setwhite.php');
-echo '
-<div class="page-content">
-<div class="tng-topbar"><button class="tng-topbar-toggle" title="Toggle menu" aria-label="Toggle menu"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="4.5" width="16" height="2" rx="1" fill="currentColor"/><rect x="2" y="9" width="16" height="2" rx="1" fill="currentColor"/><rect x="2" y="13.5" width="16" height="2" rx="1" fill="currentColor"/></svg></button><span class="tng-topbar-title">Whitelist</span><div class="tng-topbar-spacer"></div><a class="tng-topbar-back" href="/">&#8592; Dashboard</a></div>
-<div align=center>
-<script>
-    $("document").ready(function(){
-    $("#line_numbers").linenumbers({col_width:"50px"});
-    })
-</script>
-<script src="linear.js"></script>
-<h3>Whitelist</h3>
+if ($referer !== "https://$myip:40443/" && $referer !== "https://$myip:40443/index.php") {
+    if (!isset($index) || $index !== 'yes') {
+        if (strpos($referer, $allowed_prefix) !== 0 && strpos($referer, $allowed_prefix_ip) !== 0) exit(0);
+    }
+}
+
+$file = is_file('whitelist.db') ? file('whitelist.db') : array();
+$saved = isset($_GET['saved']) && $_GET['saved'] === '1';
+tng_ui_page_start('setwhite.php', 'Whitelist', 'Domain pengecualian yang selalu lolos walau masuk blocklist.');
+if (!empty($saved)) tng_ui_notice('success', 'Perubahan tersimpan', 'Whitelist berhasil disimpan. Jalankan Maintenance → Reload untuk mengaktifkan.');
+if (!empty($error)) tng_ui_notice('critical', 'Domain tidak valid', $error);
+tng_ui_card_start('Whitelist', 'Domain di daftar ini selalu lolos — diproses sebelum filter Trust+. Efektif setelah Reload.');
+echo '<div class="wl-section">
 <form name="wlist" action="setwhite.php" method="post">
-<div class="wl-section">
-  <div class="wl-head">
+  <input type="hidden" name="csrf" value="' . tng_e(tng_csrf_token()) . '">
+  <div class="wl-head editor-head">
     <span class="wl-title">Domain Pengecualian</span>
     <span class="wl-badge">' . intval(count($file ?: array())) . ' domain</span>
   </div>
-  <div class="wl-desc">Domain di daftar ini <b>selalu lolos</b> walau masuk blocklist &mdash; diproses sebelum filter Trust+.</div>
-  <div class="areatxt"><textarea rows="10" name="data" id="line_numbers" placeholder="satu domain per baris">';
+  <div class="areatxt"><textarea rows="12" name="data" placeholder="satu domain per baris" spellcheck="false" autocomplete="off" aria-label="Daftar domain whitelist manual">';
 foreach($file as $text) { echo htmlspecialchars($text, ENT_QUOTES, 'UTF-8'); }
 echo '</textarea></div>
-  <div class="wl-actions">
+  <div class="wl-actions form-actions">
     <input type="submit" id="submit" value="Simpan" class="submit-button"/>
-    <input type="button" onclick="location.href = \'manage.php\';" class="submit-button" value="Kembali"/>
+    <a href="/" class="submit-button button-secondary">Kembali</a>
     <span class="wl-hint">*perubahan efektif setelah Reload</span>
   </div>
-</div>
 </form>
-<p><small><b>&#169; 2024 Kominfo</b></small>
-</div>
-</div>
 </div>';
+tng_ui_card_end();
+
+tng_ui_page_end('setwhite.php');
 ?>

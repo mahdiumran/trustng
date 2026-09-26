@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/includes/ui.php';
 error_reporting(0);
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
@@ -47,7 +48,7 @@ if($_POST['lp1'] ?? null) {
     // Create flag for reload.php to generate lamanlabuh.conf (runs as root via sudo)
     $file = fopen('setdns.new', 'w');
     if ($file) { fwrite($file, ''); fclose($file); }
-    echo "<script>alert('ip lamanlabuh telah diubah, silahkan reload untuk mengaktifkan');</script>";
+    $notice = 'IP lamanlabuh telah disimpan. Jalankan Maintenance → Reload untuk mengaktifkan perubahan.';
     $index = 'yes'; $back = 'history.go(-2)';
 }
 
@@ -58,7 +59,7 @@ if (strpos($referer, $allowed_prefix) !== 0 && strpos($referer, $allowed_prefix_
         }
 }
 
-if ($_GET['default'] == 'yes') {
+if (isset($_GET['default']) && $_GET['default'] == 'yes') {
     $lp1 = '';
     $lp2 = '';
     $lp3 = '';
@@ -76,48 +77,37 @@ if ($_GET['default'] == 'yes') {
 $ipaddr = shell_exec("ifconfig eth0 | grep netmask | sed 's/ .*inet //;s/ .*//'");
 $useip6 = file_get_contents('setip6');
 
-echo '<!DOCTYPE html>
-<html lang="id">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" type="text/css" href="style.css" />
-<title>DNS TRUST-NG - LAMANLABUH</title>
-</head>
-<body class="with-sidebar sidebar-collapsed">
-<div id="sidebar-overlay"></div>
-<div class="page-shell">
-';
-include_once 'menu.php';
-trustng_render_sidebar('setlp.php');
+tng_ui_page_start('setlp.php', 'Lamanlabuh', 'Landing page untuk situs yang diblokir oleh Trust+. Format: ip_address, bukan cname.');
+if (!empty($notice)) tng_ui_notice('success', 'Perubahan tersimpan', $notice);
+tng_ui_card_start('Lamanlabuh', 'Alamat landing page per keluarga IP. IP referensi: ' . trim($ipaddr));
 
-echo '<div class="page-content">';
-echo '<div class="tng-topbar"><button class="tng-topbar-toggle" title="Toggle menu" aria-label="Toggle menu"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="4.5" width="16" height="2" rx="1" fill="currentColor"/><rect x="2" y="9" width="16" height="2" rx="1" fill="currentColor"/><rect x="2" y="13.5" width="16" height="2" rx="1" fill="currentColor"/></svg></button><span class="tng-topbar-title">Lamanlabuh</span><div class="tng-topbar-spacer"></div><a class="tng-topbar-back" href="/">&#8592; Dashboard</a></div>';
-echo '
-<div align=center>
-<a href="/"><img src="img/logo-img/trust-ng.jpg" width="200px"></a>
-<form name="setlp" action="setlp.php" method="post">
-<p/>
-<h3>Lamanlabuh<br><small>'.$ipaddr.'</small></h3>
-<small>Landing page untuk situs yang diblokir oleh Trust+<br>format: ip_address bukan cname</small><br>
-IPv4
-<input type="text" name="lp1" class="form__w" value="'.$lp1.'"placeholder="(ip4-1)" required />
-<input type="text" name="lp2" class="form__w" value="'.$lp2.'" placeholder="(ip4-2)" />
-<input type="text" name="lp3" class="form__w" value="'.$lp3.'" placeholder="(ip4-3)" />';
+echo '<form name="setlp" action="setlp.php" method="post">
+<div class="set-section">
+  <div class="set-section-head"><span class="set-section-title">IPv4</span></div>
+  <div class="field-grid three">
+    <div class="tng-field field"><label for="landing-ipv4-1">Lamanlabuh 1</label><input id="landing-ipv4-1" type="text" name="lp1" class="form__w" value="'.tng_e($lp1).'" placeholder="(ip4-1)" required /></div>
+    <div class="tng-field field"><label for="landing-ipv4-2">Lamanlabuh 2</label><input id="landing-ipv4-2" type="text" name="lp2" class="form__w" value="'.tng_e($lp2).'" placeholder="(ip4-2)" /></div>
+    <div class="tng-field field"><label for="landing-ipv4-3">Lamanlabuh 3</label><input id="landing-ipv4-3" type="text" name="lp3" class="form__w" value="'.tng_e($lp3).'" placeholder="(ip4-3)" /></div>
+  </div>
+</div>';
 if ($useip6 == 'yes') { echo '
-IPv6
-<input type="text" name="lp4" class="form__w" value="'.$lp4.'"placeholder="ipv6-1" />
-<input type="text" name="lp5" class="form__w" value="'.$lp5.'" placeholder="ipv6-2" />
-<input type="text" name="lp6" class="form__w" value="'.$lp6.'" placeholder="ipv6-3" />';
+<div class="set-section">
+  <div class="set-section-head"><span class="set-section-title">IPv6</span></div>
+  <div class="field-grid three">
+    <div class="tng-field field"><label for="landing-ipv6-1">Lamanlabuh 4</label><input id="landing-ipv6-1" type="text" name="lp4" class="form__w" value="'.tng_e($lp4).'" placeholder="ipv6-1" /></div>
+    <div class="tng-field field"><label for="landing-ipv6-2">Lamanlabuh 5</label><input id="landing-ipv6-2" type="text" name="lp5" class="form__w" value="'.tng_e($lp5).'" placeholder="ipv6-2" /></div>
+    <div class="tng-field field"><label for="landing-ipv6-3">Lamanlabuh 6</label><input id="landing-ipv6-3" type="text" name="lp6" class="form__w" value="'.tng_e($lp6).'" placeholder="ipv6-3" /></div>
+  </div>
+</div>';
 }
 echo '
-<input type="submit" id="submit" value="Simpan" class="submit-button"/> <a href="setlp.php?default=yes"><input type="button" class="submit-button" value="Default"></a> <input type="button"  onclick="'.$back.'" class="submit-button" value="Kembali">
-</form>
-<p><small><b>&#169; 2024 Kominfo</b></small>
-</div>';
+<div class="form-actions di-actions">
+  <input type="submit" id="submit" value="Simpan" class="submit-button"/>
+  <a class="submit-button button-secondary" href="setlp.php?default=yes">Default</a>
+  <input type="button" onclick="'.$back.'" class="submit-button button-secondary" value="Kembali">
+</div>
+</form>';
+tng_ui_card_end();
 
-echo '</div></div>';
+tng_ui_page_end('setlp.php');
 ?>

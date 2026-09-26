@@ -30,6 +30,10 @@ function trustng_state_write($name, $data)
         throw new RuntimeException("Unable to create temporary state file for $name");
     }
 
+    if (!@chmod($tmp, 0600)) {
+        @unlink($tmp);
+        throw new RuntimeException("Unable to secure temporary state file for $name");
+    }
     $written = @file_put_contents($tmp, (string) $data, LOCK_EX);
     if ($written === false || !@chmod($tmp, 0664) || !@rename($tmp, $path)) {
         @unlink($tmp);
@@ -67,7 +71,10 @@ function trustng_state_promote($pendingName, $activeName)
 
 function trustng_run_panel_script($name)
 {
+    $allowed = array('setforwarder.sh', 'sethosts.sh', 'setresolver.sh', 'setwhitelist.sh');
+    if (!in_array($name, $allowed, true)) {
+        throw new InvalidArgumentException('Panel script is not allowed');
+    }
     $path = trustng_state_path($name);
-    // panel runs as www-data, scripts write to /etc/unbound/* → need sudo (NOPASSWD /usr/bin/sh)
     return shell_exec('sudo -n sh ' . escapeshellarg($path) . ' 2>&1');
 }

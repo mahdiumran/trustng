@@ -3,12 +3,12 @@ error_reporting(0);
 
 if (!isset($index) || $index !== 'yes') exit(0);
 
-include_once 'menu.php';
+require_once __DIR__ . '/includes/ui.php';
 
 // --- Data gathering dengan safe fallback ---
 $myip        = isset($_SERVER['SERVER_ADDR']) ? $_SERVER['SERVER_ADDR'] : '';
-$myv         = @file_get_contents('/etc/myversion');
-$myv         = ($myv !== false) ? trim($myv) : 'unknown';
+$myv         = trim((string) @shell_exec('/usr/local/sbin/unbound -V 2>/dev/null | head -1'));
+$myv         = preg_match('/Version\\s+([^\\s]+)/i', $myv, $version) ? $version[1] : 'tidak tersedia';
 $ipaddr      = @shell_exec("ifconfig eth0 2>/dev/null | grep netmask | sed 's/ .*inet //;s/ .*//'");
 $ipaddr      = ($ipaddr !== null) ? trim($ipaddr) : '';
 $ip6         = @shell_exec("ifconfig eth0 2>/dev/null | grep inet6 | grep global | head -1 | sed 's/.*inet6 //;s/ .*//'");
@@ -168,7 +168,7 @@ $resourceState = function($value) {
 
 $resourceTitle = function($label) {
     $titles = array(
-        'RAM'    => 'Memori Tersedia',
+        'RAM'    => 'Penggunaan RAM',
         'CPU'    => 'CPU Load',
         'Load'   => 'System Load',
         'Disk'   => 'Penggunaan Disk',
@@ -196,6 +196,12 @@ $pairs = tng_unbound_stats_pairs($unbound_stats);
 $totalQueries = intval($pairs['total.num.queries'] ?? 0);
 $blockedQueries = intval($pairs['total.num.blacklist'] ?? 0);
 $cacheHits = intval($pairs['total.num.cachehits'] ?? 0);
+$cacheMisses = intval($pairs['total.num.cachemiss'] ?? 0);
+$prefetchCount = intval($pairs['total.num.prefetch'] ?? 0);
+$requestCurrent = intval($pairs['total.requestlist.current.all'] ?? 0);
+$resolverUptime = intval(floatval($pairs['time.up'] ?? 0));
+$recursionAverage = floatval($pairs['total.recursion.time.avg'] ?? 0) * 1000;
+$cacheMemory = intval($pairs['mem.cache.rrset'] ?? 0) + intval($pairs['mem.cache.message'] ?? 0);
 $statsErr = ($unbound_stats === '' || preg_match('/^error:|^could not/i', trim($unbound_stats))) ? ($unbound_stats ?: 'unbound-control tidak merespon') : '';
 
 // Trust+ blocklist entries count
@@ -207,252 +213,260 @@ $totalQueriesFmt = number_format($totalQueries);
 $blockedQueriesFmt = number_format($blockedQueries);
 $trustCountFmt = number_format(intval($trustCount));
 $blockRate = ($totalQueries > 0) ? round(($blockedQueries / $totalQueries) * 100, 1) : 0;
+$cacheTotal = $cacheHits + $cacheMisses;
+$cacheRatio = $cacheTotal > 0 ? round(($cacheHits / $cacheTotal) * 100, 1) : 0;
+$formatDuration = function($seconds) {
+    $seconds = max(0, intval($seconds));
+    $days = intdiv($seconds, 86400);
+    $hours = intdiv($seconds % 86400, 3600);
+    $minutes = intdiv($seconds % 3600, 60);
+    return ($days > 0 ? $days . 'h ' : '') . $hours . 'j ' . $minutes . 'm';
+};
+$resolverUptimeText = $formatDuration($resolverUptime);
+$hostName = gethostname() ?: 'trust-ng';
+$kernelVersion = php_uname('r');
+$cpuCores = intval(@shell_exec('nproc 2>/dev/null')) ?: 1;
+$blocklistMtime = @filemtime('/etc/unbound/db/trust.txt');
+$blocklistUpdated = $blocklistMtime ? date('d-m-Y H:i', $blocklistMtime) : 'Tidak tersedia';
+$blocklistTimer = trim((string) @shell_exec('systemctl is-enabled update-blocklist.timer 2>/dev/null'));
+$blocklistTimerText = $blocklistTimer === 'enabled' ? 'Timer aktif' : 'Timer tidak aktif';
+$dnssecEnabled = trim((string) @file_get_contents('setdnssec')) !== 'no';
+$safeSearchEnabled = trim((string) @file_get_contents('setsafesearch')) === 'yes';
+$resolverData = trim((string) @file_get_contents('resolver.data'));
+$resolverCount = 0;
+if ($resolverData !== '') {
+    foreach (explode(',', $resolverData) as $resolverValue) {
+        if (trim($resolverValue) !== '') $resolverCount++;
+    }
+}
+$cacheMemoryText = number_format($cacheMemory / 1048576, 1) . ' MB';
+$recursionAverageText = $recursionAverage > 0 ? number_format($recursionAverage, 3) . ' ms' : '—';
+
+tng_ui_page_start('manage.php', 'Dashboard', 'Ringkasan operasional resolver DNS, status layanan, dan trafik blokir secara langsung.');
 ?>
-<!DOCTYPE html>
-<html lang="id">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" type="text/css" href="style.css"/>
-<title>DNS Dashboard</title>
-<script src="/jquery.min.js"></script>
-<script type="text/javascript" src="loader.js"></script>
-</head>
-<body>
-<main class="manage-shell hosting-dashboard" id="mainShell">
-
-<!-- Overlay mobile -->
-<div id="sidebar-overlay"></div>
-
-<!-- Sidebar dari menu.php, dibungkus wrapper -->
-<div class="sidebar-wrapper" id="sidebarWrapper">
-<?php trustng_render_sidebar('manage.php'); ?>
+<div data-page-actions>
+  <span class="badge live-pill"><span class="status-dot success"></span>LIVE</span>
 </div>
 
-<!-- KONTEN UTAMA -->
-<section class="dashboard-main">
+<div class="tng-content dashboard-console">
 
-  <!-- TOPBAR â€” menggantikan hero panel -->
-  <div class="tng-topbar">
-
-    <!-- Tombol toggle SATU-SATUNYA â€” tidak ada lagi di menu.php -->
-    <button type="button" id="tng-menu-toggle" title="Toggle Sidebar" aria-label="Toggle menu" aria-controls="dashboardSidebar" aria-expanded="true">
-      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect x="2" y="4.5" width="16" height="2" rx="1" fill="currentColor"/>
-        <rect x="2" y="9"   width="16" height="2" rx="1" fill="currentColor"/>
-        <rect x="2" y="13.5" width="16" height="2" rx="1" fill="currentColor"/>
-      </svg>
-    </button>
-
-    <a href="/" class="tng-topbar-brand">
-      <img src="img/logo-img/trust-ng.jpg" alt="TRUST-NG">
-      <div>
-        <div class="brand-name">TRUST-NG</div>
-        <div class="brand-ver">v<?php echo htmlspecialchars($myv, ENT_QUOTES, 'UTF-8'); ?> &nbsp;Â·&nbsp; DNS Control Panel</div>
-      </div>
-    </a>
-
-    <div class="tng-topbar-spacer"></div>
-
-    <div class="tng-topbar-pills">
-      <?php if ($ipaddr): ?>
-      <span class="tng-topbar-pill">IPv4 <?php echo $statusText($ipaddr); ?></span>
-      <?php endif; ?>
-      <?php if ($ip6): ?>
-      <span class="tng-topbar-pill">IPv6 <?php echo $statusText($ip6); ?></span>
-      <?php endif; ?>
-      <?php if ($model): ?>
-      <span class="tng-topbar-pill"><?php echo $statusText($model); ?></span>
-      <?php endif; ?>
-      <span class="live-pill">LIVE</span>
-    </div>
-  </div><!-- end .tng-topbar -->
-
-  <div class="tng-content">
-
-    <!-- ======================================================
-         HERO STATS ROW
-         ====================================================== -->
-    <div class="tng-hero-row">
-      <div class="tng-hero-card">
-        <div class="tng-hero-icon"><i class="fa-solid fa-globe"></i></div>
-        <div class="tng-hero-info">
-          <span class="tng-hero-label">Total Queries</span>
-          <span class="tng-hero-value" id="heroTotal"><?php echo htmlspecialchars($totalQueriesFmt, ENT_QUOTES, 'UTF-8'); ?></span>
-          <span class="tng-hero-unit">total handled</span>
-        </div>
-      </div>
-      <div class="tng-hero-card hero-blocked">
-        <div class="tng-hero-icon"><i class="fa-solid fa-shield-halved"></i></div>
-        <div class="tng-hero-info">
-          <span class="tng-hero-label">Blocked Queries</span>
-          <span class="tng-hero-value" id="heroBlocked"><?php echo htmlspecialchars($blockedQueriesFmt, ENT_QUOTES, 'UTF-8'); ?></span>
-          <span class="tng-hero-unit">blocked by Trust+</span>
-        </div>
-      </div>
-      <div class="tng-hero-card hero-rate">
-        <div class="tng-hero-icon"><i class="fa-solid fa-percent"></i></div>
-        <div class="tng-hero-info">
-          <span class="tng-hero-label">Block Rate</span>
-          <span class="tng-hero-value" id="heroRate">—</span>
-          <span class="tng-hero-unit">% of total</span>
-        </div>
-      </div>
-      <div class="tng-hero-card">
-        <div class="tng-hero-icon"><i class="fa-solid fa-database"></i></div>
-        <div class="tng-hero-info">
-          <span class="tng-hero-label">Blocklist Entries</span>
-          <span class="tng-hero-value"><?php echo htmlspecialchars($trustCountFmt, ENT_QUOTES, 'UTF-8'); ?></span>
-          <span class="tng-hero-unit">domains</span>
-        </div>
+  <section class="dashboard-commandbar" aria-label="Status node DNS">
+    <div class="dashboard-command-copy">
+      <span class="dashboard-path">TRUST-NG / DNS CONSOLE / <strong>RESOLVER METRICS</strong></span>
+      <div class="dashboard-node-meta">
+        <span><i class="fa-solid fa-server" aria-hidden="true"></i><?php echo tng_e($hostName); ?></span>
+        <?php if ($ipaddr !== ''): ?><span class="label-mono">IPv4 <?php echo tng_e($ipaddr); ?></span><?php endif; ?>
+        <?php if ($ip6 !== ''): ?><span class="label-mono">IPv6 <?php echo tng_e($ip6); ?></span><?php endif; ?>
       </div>
     </div>
+    <div class="dashboard-command-actions">
+      <a class="button button-secondary button-small" href="stats.php"><i class="fa-solid fa-chart-line" aria-hidden="true"></i>Statistik</a>
+      <a class="button button-small" href="digtest.php"><i class="fa-solid fa-terminal" aria-hidden="true"></i>DNS Inspector</a>
+    </div>
+  </section>
 
-    <!-- ======================================================
-         STATUS SERVICES
-         ====================================================== -->
-    <div>
-      <p class="tng-section-label">Status Layanan</p>
-      <div class="tng-status-strip">
-        <div class="tng-status-card">
-          <div class="tng-status-icon">UN</div>
-          <div class="tng-status-info">
-            <span class="tng-status-name">Unbound</span>
-            <span class="tng-status-val <?php echo $statusBadge($mystatus); ?>"><?php echo $statusText($mystatus); ?></span>
-          </div>
-        </div>
-        <div class="tng-status-card">
-          <div class="tng-status-icon">TR</div>
-          <div class="tng-status-info">
-            <span class="tng-status-name">Trust+</span>
-            <span class="tng-status-val <?php echo $statusBadge($truststatus); ?>"><?php echo $statusText($truststatus); ?></span>
-          </div>
-        </div>
-        <div class="tng-status-card">
-          <div class="tng-status-icon">IP</div>
-          <div class="tng-status-info">
-            <span class="tng-status-name">External IP</span>
-            <span class="tng-status-val"><?php echo $statusText($extip); ?></span>
-          </div>
-        </div>
-        <div class="tng-status-card">
-          <div class="tng-status-icon tng-status-icon-sm">UP</div>
-          <div class="tng-status-info">
-            <span class="tng-status-name">Uptime</span>
-            <span class="tng-status-val tng-status-val-sm"><?php echo $statusText($uptime); ?></span>
-          </div>
-        </div>
+  <section class="dashboard-ticker <?php echo $statsErr === '' ? 'is-healthy' : 'is-critical'; ?>" aria-label="Ringkasan status operasional">
+    <span class="dashboard-ticker-label"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i>STATUS FEED</span>
+    <p><?php if ($statsErr === ''): ?>Unbound aktif · Trust+ <?php echo tng_e($trustCountFmt); ?> signature · database diperbarui <?php echo tng_e($blocklistUpdated); ?><?php else: ?>Statistik Unbound bermasalah: <?php echo tng_e($statsErr); ?><?php endif; ?></p>
+    <span class="dashboard-ticker-meta"><?php echo tng_e($blocklistTimerText); ?></span>
+  </section>
+
+  <div class="tng-hero-row dashboard-kpi-grid">
+    <div class="tng-hero-card dashboard-kpi-card">
+      <div class="tng-hero-icon"><i class="fa-solid fa-globe" aria-hidden="true"></i></div>
+      <div class="tng-hero-info">
+        <span class="kicker">Total Queries</span>
+        <span class="tng-hero-value" id="heroTotal"><?php echo htmlspecialchars($totalQueriesFmt, ENT_QUOTES, 'UTF-8'); ?></span>
+        <span class="tng-hero-unit">sejak service start</span>
       </div>
     </div>
-
-    <!-- ======================================================
-         RESOURCE SISTEM
-         ====================================================== -->
-    <?php if (!empty($resourceItems)): ?>
-    <div class="tng-resource-strip">
-      <?php foreach ($resourceItems as $resource):
-          $label        = htmlspecialchars($resource[0], ENT_QUOTES, 'UTF-8');
-          $title        = htmlspecialchars($resourceTitle($resource[0]), ENT_QUOTES, 'UTF-8');
-          $value        = $resource[1];
-          $state        = $resourceState($value);
-          $unit         = htmlspecialchars($resourceUnit($resource[0]), ENT_QUOTES, 'UTF-8');
-          $icon         = $resourceIcon($resource[0]);
-          $displayValue = rtrim(rtrim(number_format($value, 1), '0'), '.');
-      ?>
-      <div class="tng-res-tile <?php echo $state; ?>"
-           data-resource="<?php echo $label; ?>"
-           data-value="<?php echo $value; ?>"
-           data-unit="<?php echo $unit; ?>">
-        <div class="tng-res-tile-head">
-          <i class="fa-solid <?php echo $icon; ?>" aria-hidden="true"></i>
-          <span class="tng-res-tile-name"><?php echo $title; ?></span>
-        </div>
-        <div class="tng-res-tile-value">
-          <?php echo $displayValue; ?><span><?php echo $unit; ?></span>
-        </div>
-        <div class="tng-res-tile-bar">
-          <div class="tng-res-tile-bar-fill" style="width:<?php echo $value; ?>%"></div>
-        </div>
-      </div>
-      <?php endforeach; ?>
-    </div>
-    <?php endif; ?>
-
-    <!-- ======================================================
-         CHARTS ROW — Queries + Blocklist side by side
-         ====================================================== -->
-    <div class="tng-chart-row">
-      <div class="tng-query-card">
-        <div class="tng-query-head">
-          <div class="tng-query-meta">
-            <span class="tng-query-label">Total Queries</span>
-            <span class="tng-query-count" id="queryValue">0</span>
-            <span class="tng-query-mode" id="queryMode">menunggu data…</span>
-          </div>
-          <span id="queryPulse" class="query-pulse"></span>
-        </div>
-        <canvas id="queryChart" width="720" height="200"></canvas>
-        <div id="statsRaw" class="stats-raw">
-          <?php include 's.php'; ?>
-        </div>
-      </div>
-
-      <div class="tng-query-card">
-        <div class="tng-query-head">
-          <div class="tng-query-meta">
-            <span class="tng-query-label">Blocked Queries</span>
-            <span class="tng-query-count" id="blockedValue">0</span>
-            <span class="tng-query-mode" id="blockedMode">menunggu data…</span>
-          </div>
-          <span id="blockedPulse" class="query-pulse query-pulse-rose"></span>
-        </div>
-        <canvas id="blockedChart" width="720" height="200"></canvas>
+    <div class="tng-hero-card dashboard-kpi-card hero-blocked">
+      <div class="tng-hero-icon"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i></div>
+      <div class="tng-hero-info">
+        <span class="kicker">Blocked Queries</span>
+        <span class="tng-hero-value" id="heroBlocked"><?php echo htmlspecialchars($blockedQueriesFmt, ENT_QUOTES, 'UTF-8'); ?></span>
+        <span class="tng-hero-unit">diblokir Trust+</span>
       </div>
     </div>
-
-    <!-- ======================================================
-         ANALYTICS ROW — Cache donut + Forward bars
-         ====================================================== -->
-    <div class="tng-chart-row">
-      <div class="tng-query-card">
-        <div class="tng-query-head">
-          <div class="tng-query-meta">
-            <span class="tng-query-label">Cache Performance</span>
-          </div>
-        </div>
-        <div class="tng-donut-wrap">
-          <canvas id="donutChart" width="200" height="200"></canvas>
-          <div id="donutLegend" class="tng-donut-legend"></div>
-        </div>
-      </div>
-
-      <div class="tng-query-card">
-        <div class="tng-query-head">
-          <div class="tng-query-meta">
-            <span class="tng-query-label">Forward Destinations</span>
-          </div>
-        </div>
-        <div id="forwardBars" class="tng-forward-bars"></div>
+    <div class="tng-hero-card dashboard-kpi-card hero-rate">
+      <div class="tng-hero-icon"><i class="fa-solid fa-percent" aria-hidden="true"></i></div>
+      <div class="tng-hero-info">
+        <span class="kicker">Block Rate</span>
+        <span class="tng-hero-value" id="heroRate"><?php echo tng_e(number_format($blockRate, 1)); ?></span>
+        <span class="tng-hero-unit">% dari total</span>
       </div>
     </div>
-
-  </div><!-- end .tng-content -->
-
-  <!-- Time bar -->
-  <div id="ifstat" class="status-time" title="Server Date and Time Now">
-    <?php include 'ifstat.php'; ?>
+    <div class="tng-hero-card dashboard-kpi-card">
+      <div class="tng-hero-icon"><i class="fa-solid fa-database" aria-hidden="true"></i></div>
+      <div class="tng-hero-info">
+        <span class="kicker">Blocklist Entries</span>
+        <span class="tng-hero-value"><?php echo htmlspecialchars($trustCountFmt, ENT_QUOTES, 'UTF-8'); ?></span>
+        <span class="tng-hero-unit">domain</span>
+      </div>
+    </div>
   </div>
 
-  <p class="manage-footer"><small><b>&copy; 2024 Kominfo</b></small></p>
+  <section class="dashboard-operations-grid">
+    <div class="dashboard-panel">
+      <header class="dashboard-panel-head">
+        <div><span class="kicker">CORE SERVICES</span><h2>Status Layanan</h2></div>
+        <span class="label-mono">Unbound Control</span>
+      </header>
+      <div class="dashboard-service-grid">
+        <article class="dashboard-service-card">
+          <div class="dashboard-service-title"><i class="fa-solid fa-server" aria-hidden="true"></i><strong>Unbound Core</strong></div>
+          <span class="badge <?php echo $statusBadge($mystatus); ?>"><?php echo $statusText($mystatus); ?></span>
+          <small>Control socket lokal</small>
+        </article>
+        <article class="dashboard-service-card">
+          <div class="dashboard-service-title"><i class="fa-solid fa-shield-halved" aria-hidden="true"></i><strong>Trust+ Filter</strong></div>
+          <span class="badge <?php echo $statusBadge($truststatus); ?>"><?php echo $statusText($truststatus); ?></span>
+          <small><?php echo tng_e($trustCountFmt); ?> signature</small>
+        </article>
+        <article class="dashboard-service-card">
+          <div class="dashboard-service-title"><i class="fa-solid fa-lock" aria-hidden="true"></i><strong>DNSSEC</strong></div>
+          <span class="badge <?php echo $dnssecEnabled ? 'badge-ok' : 'badge-warn'; ?>"><?php echo $dnssecEnabled ? 'Aktif' : 'Nonaktif'; ?></span>
+          <small>Validator module</small>
+        </article>
+        <article class="dashboard-service-card">
+          <div class="dashboard-service-title"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><strong>SafeSearch</strong></div>
+          <span class="badge <?php echo $safeSearchEnabled ? 'badge-ok' : 'badge-unknown'; ?>"><?php echo $safeSearchEnabled ? 'Aktif' : 'Nonaktif'; ?></span>
+          <small>RPZ enforcement</small>
+        </article>
+      </div>
+      <div class="dashboard-service-footer">
+        <span><strong>External IP</strong><?php echo $statusText($extip); ?></span>
+        <span><strong>Resolver Uptime</strong><?php echo tng_e($resolverUptimeText); ?></span>
+        <span><strong>Request Aktif</strong><span id="activeRequestCount"><?php echo tng_e($requestCurrent); ?></span></span>
+      </div>
+    </div>
 
-</section><!-- end .dashboard-main -->
-</main>
+    <?php if (!empty($resourceItems)): ?>
+    <div class="dashboard-panel">
+      <header class="dashboard-panel-head">
+        <div><span class="kicker">HOST TELEMETRY</span><h2>Resource Sistem</h2></div>
+        <span class="label-mono"><?php echo tng_e($cpuCores); ?> CPU core</span>
+      </header>
+      <div class="tng-resource-strip dashboard-resource-grid">
+        <?php foreach ($resourceItems as $resource):
+            $label        = htmlspecialchars($resource[0], ENT_QUOTES, 'UTF-8');
+            $title        = htmlspecialchars($resourceTitle($resource[0]), ENT_QUOTES, 'UTF-8');
+            $value        = $resource[1];
+            $state        = $resourceState($value);
+            $unit         = htmlspecialchars($resourceUnit($resource[0]), ENT_QUOTES, 'UTF-8');
+            $icon         = $resourceIcon($resource[0]);
+            $displayValue = rtrim(rtrim(number_format($value, 1), '0'), '.');
+        ?>
+        <div class="tng-res-tile <?php echo $state; ?>" data-resource="<?php echo $label; ?>" data-value="<?php echo $value; ?>" data-unit="<?php echo $unit; ?>">
+          <div class="tng-res-tile-head"><i class="fa-solid <?php echo $icon; ?>" aria-hidden="true"></i><span><?php echo $title; ?></span></div>
+          <div class="tng-res-tile-value"><?php echo $displayValue; ?><span><?php echo $unit; ?></span></div>
+          <div class="tng-res-tile-bar"><div class="tng-res-tile-bar-fill" style="width:<?php echo $value; ?>%"></div></div>
+        </div>
+        <?php endforeach; ?>
+      </div>
+      <div class="dashboard-panel-foot"><span>Kernel <?php echo tng_e($kernelVersion); ?></span><span>Model <?php echo tng_e($model !== '' ? $model : 'Tidak tersedia'); ?></span></div>
+    </div>
+    <?php endif; ?>
+  </section>
 
+  <div class="tng-chart-row">
+    <div class="tng-query-card dashboard-data-card">
+      <div class="tng-query-head">
+        <div class="tng-query-meta">
+          <span class="tng-query-label">Total Queries Real-Time</span>
+          <span class="tng-query-count" id="queryValue">0</span>
+          <span class="tng-query-mode" id="queryMode">menunggu data…</span>
+        </div>
+        <span id="queryPulse" class="query-pulse"></span>
+      </div>
+      <canvas id="queryChart" width="720" height="200"></canvas>
+      <div id="statsRaw" class="stats-raw">
+        <?php include 's.php'; ?>
+      </div>
+    </div>
+
+    <div class="tng-query-card dashboard-data-card">
+      <div class="tng-query-head">
+        <div class="tng-query-meta">
+          <span class="tng-query-label">Blocked Queries Real-Time</span>
+          <span class="tng-query-count" id="blockedValue">0</span>
+          <span class="tng-query-mode" id="blockedMode">menunggu data…</span>
+        </div>
+        <span id="blockedPulse" class="query-pulse query-pulse-rose"></span>
+      </div>
+      <canvas id="blockedChart" width="720" height="200"></canvas>
+    </div>
+  </div>
+
+  <div class="tng-chart-row">
+    <div class="tng-query-card dashboard-data-card">
+      <div class="tng-query-head">
+        <div class="tng-query-meta">
+          <span class="tng-query-label">Cache Performance</span>
+          <span class="tng-query-count" id="cacheRatioValue"><?php echo tng_e(number_format($cacheRatio, 1)); ?>%</span>
+          <span class="tng-query-mode"><?php echo tng_e(number_format($cacheHits)); ?> hit · <?php echo tng_e(number_format($cacheMisses)); ?> miss</span>
+        </div>
+      </div>
+      <div class="tng-donut-wrap">
+        <canvas id="donutChart" width="200" height="200"></canvas>
+        <div id="donutLegend" class="tng-donut-legend"></div>
+      </div>
+    </div>
+
+    <div class="tng-query-card dashboard-data-card">
+      <div class="tng-query-head">
+        <div class="tng-query-meta">
+          <span class="tng-query-label">Forward Destinations</span>
+          <span class="tng-query-count"><?php echo tng_e($resolverCount); ?></span>
+          <span class="tng-query-mode">parent resolver terkonfigurasi</span>
+        </div>
+      </div>
+      <div id="forwardBars" class="tng-forward-bars"></div>
+    </div>
+  </div>
+
+  <section class="dashboard-runtime-strip" aria-label="Detail runtime Unbound">
+    <span><i class="fa-solid fa-memory" aria-hidden="true"></i><strong>Cache Memory</strong><?php echo tng_e($cacheMemoryText); ?></span>
+    <span><i class="fa-solid fa-forward-fast" aria-hidden="true"></i><strong>Prefetch</strong><?php echo tng_e(number_format($prefetchCount)); ?></span>
+    <span><i class="fa-solid fa-stopwatch" aria-hidden="true"></i><strong>Rata-rata Rekursi</strong><span id="recursionAverage"><?php echo tng_e($recursionAverageText); ?></span></span>
+    <span><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i><strong>Uptime Resolver</strong><span id="resolverUptime"><?php echo tng_e($resolverUptimeText); ?></span></span>
+  </section>
+
+  <section class="dashboard-panel dashboard-ledger">
+    <header class="dashboard-panel-head dashboard-ledger-head">
+      <div>
+        <span class="kicker">UNBOUND REQUESTLIST</span>
+        <h2>Active DNS Request Ledger</h2>
+        <p>Permintaan yang sedang berada di pipeline resolver, bukan histori query.</p>
+      </div>
+      <div class="dashboard-ledger-actions">
+        <span class="badge badge-unknown" id="requestLedgerStatus">Memuat</span>
+        <button class="button button-secondary button-small" id="requestRefresh" type="button"><i class="fa-solid fa-rotate" aria-hidden="true"></i>Refresh</button>
+        <a class="button button-secondary button-small" href="reqlist.php">Buka Request List</a>
+      </div>
+    </header>
+    <div class="table-wrap dashboard-ledger-table">
+      <table>
+        <thead><tr><th>Thread</th><th>Domain</th><th>Type</th><th>Class</th><th>Umur</th><th>Module / Status</th></tr></thead>
+        <tbody id="requestLedgerRows"><tr><td colspan="6"><div class="loading-state"><i class="fa-solid fa-circle-notch fa-spin" aria-hidden="true"></i><span>Mengambil request aktif dari Unbound.</span></div></td></tr></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer class="dashboard-signature">
+    <span>TRUST-NG DNS Control · Unbound <?php echo tng_e($myv); ?></span>
+    <span><?php echo tng_e($hostName); ?> · <?php echo tng_e($kernelVersion); ?> · status <?php echo $statsErr === '' ? 'tersinkronisasi' : 'perlu diperiksa'; ?></span>
+  </footer>
+
+</div>
+
+<div id="ifstat" class="status-time" title="Waktu server saat ini">
+  <?php include 'ifstat.php'; ?>
+</div>
+
+<script src="/jquery.min.js"></script>
+<script src="loader.js"></script>
 <script src="ifstat.js"></script>
 <script src="dashboard.js"></script>
-<!-- Toggling handled globally by menu.js -->
-</body>
-</html>
+<?php
+tng_ui_page_end('manage.php');

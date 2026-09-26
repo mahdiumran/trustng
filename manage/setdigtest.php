@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . '/includes/ui.php';
 error_reporting(0);
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
@@ -66,40 +67,28 @@ $d7 = file_get_contents('d7.dig');
 $d8 = file_get_contents('d8.dig');
 $d9 = file_get_contents('d9.dig');
 
-echo '<html>
-<head>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" type="text/css" href="style.css" />
-<title>DNS TRUST-NG - SET DIG TEST</title>
-</head>
-<body class="with-sidebar"><div class="page-shell">
-';
-include_once 'menu.php';
-trustng_render_sidebar('digtest.php');
-echo '
-<div class="page-content"><div class="tng-topbar"><button class="tng-topbar-toggle" title="Toggle menu" aria-label="Toggle menu"><i class="fa-solid fa-bars"></i></button><span class="tng-topbar-title">DNS Inspector</span><div class="tng-topbar-spacer"></div><a class="tng-topbar-back" href="/">&#8592; Dashboard</a></div>
-<div align=center>
-<h3>Set Dig Test<br><small>'.$ipaddr.'</small></h3>
-<form name="setdig" action="setdigtest.php" method="post">
+tng_ui_page_start('digtest.php', 'DNS Inspector', 'Konfigurasi 10 domain untuk pengujian resolusi. IP referensi: ' . trim($ipaddr));
+tng_ui_card_start('Set Dig Test', 'Isi 10 domain yang akan diuji pada halaman DNS Inspector.');
+echo '<form name="setdig" action="setdigtest.php" method="post">
 <input type="hidden" name="setdig" value="submit">
-<table>
-<tr><td><input type="text" size="20" name="d0" value="'.htmlspecialchars($d0, ENT_QUOTES, 'UTF-8').'" placeholder="www.google.com"/></td></tr>
-<tr><td><input type="text" name="d1" value="'.htmlspecialchars($d1, ENT_QUOTES, 'UTF-8').'" placeholder="www.facebook.com"/></td></tr>
-<tr><td><input type="text" name="d2" value="'.htmlspecialchars($d2, ENT_QUOTES, 'UTF-8').'" placeholder="www.bca.co.id"/></td></tr>
-<tr><td><input type="text" name="d3" value="'.htmlspecialchars($d3, ENT_QUOTES, 'UTF-8').'" placeholder="www.detik.com"/></td></tr>
-<tr><td><input type="text" name="d4" value="'.htmlspecialchars($d4, ENT_QUOTES, 'UTF-8').'" placeholder="www.youtube.com"/></td></tr>
-<tr><td><input type="text" name="d5" value="'.htmlspecialchars($d5, ENT_QUOTES, 'UTF-8').'" placeholder="pornhub.com"/></td></tr>
-<tr><td><input type="text" name="d6" value="'.htmlspecialchars($d6, ENT_QUOTES, 'UTF-8').'" placeholder="kominfo.go.id"/></td></tr>
-<tr><td><input type="text" name="d7" value="'.htmlspecialchars($d7, ENT_QUOTES, 'UTF-8').'" placeholder="reddit.com"/></td></tr>
-<tr><td><input type="text" name="d8" value="'.htmlspecialchars($d8, ENT_QUOTES, 'UTF-8').'" placeholder="lamanlabuh.resolver.id"/></td></tr>
-<tr><td><input type="text" name="d9" value="'.htmlspecialchars($d9, ENT_QUOTES, 'UTF-8').'" placeholder="www.tiktok.com"/></td></tr>
-</table>
-<input type="submit" id="submit" value="Simpan" class="submit-button"/> <a href="/"><input type="button" class="submit-button" value="Kembali"></a>
-</form>
-<p><small><b>&#169; 2024 Kominfo</b></small>
-</div></div>
-';
+<div class="field-grid">
+  <div class="tng-field field"><label for="dig-domain-0">Domain 1</label><input id="dig-domain-0" type="text" size="20" name="d0" class="form__w" value="'.htmlspecialchars($d0, ENT_QUOTES, 'UTF-8').'" placeholder="www.google.com"/></div>
+  <div class="tng-field field"><label for="dig-domain-1">Domain 2</label><input id="dig-domain-1" type="text" name="d1" class="form__w" value="'.htmlspecialchars($d1, ENT_QUOTES, 'UTF-8').'" placeholder="www.facebook.com"/></div>
+  <div class="tng-field field"><label for="dig-domain-2">Domain 3</label><input id="dig-domain-2" type="text" name="d2" class="form__w" value="'.htmlspecialchars($d2, ENT_QUOTES, 'UTF-8').'" placeholder="www.bca.co.id"/></div>
+  <div class="tng-field field"><label for="dig-domain-3">Domain 4</label><input id="dig-domain-3" type="text" name="d3" class="form__w" value="'.htmlspecialchars($d3, ENT_QUOTES, 'UTF-8').'" placeholder="www.detik.com"/></div>
+  <div class="tng-field field"><label for="dig-domain-4">Domain 5</label><input id="dig-domain-4" type="text" name="d4" class="form__w" value="'.htmlspecialchars($d4, ENT_QUOTES, 'UTF-8').'" placeholder="www.youtube.com"/></div>
+  <div class="tng-field field"><label for="dig-domain-5">Domain 6</label><input id="dig-domain-5" type="text" name="d5" class="form__w" value="'.htmlspecialchars($d5, ENT_QUOTES, 'UTF-8').'" placeholder="pornhub.com"/></div>
+  <div class="tng-field field"><label for="dig-domain-6">Domain 7</label><input id="dig-domain-6" type="text" name="d6" class="form__w" value="'.htmlspecialchars($d6, ENT_QUOTES, 'UTF-8').'" placeholder="kominfo.go.id"/></div>
+  <div class="tng-field field"><label for="dig-domain-7">Domain 8</label><input id="dig-domain-7" type="text" name="d7" class="form__w" value="'.htmlspecialchars($d7, ENT_QUOTES, 'UTF-8').'" placeholder="reddit.com"/></div>
+  <div class="tng-field field"><label for="dig-domain-8">Domain 9</label><input id="dig-domain-8" type="text" name="d8" class="form__w" value="'.htmlspecialchars($d8, ENT_QUOTES, 'UTF-8').'" placeholder="lamanlabuh.resolver.id"/></div>
+  <div class="tng-field field"><label for="dig-domain-9">Domain 10</label><input id="dig-domain-9" type="text" name="d9" class="form__w" value="'.htmlspecialchars($d9, ENT_QUOTES, 'UTF-8').'" placeholder="www.tiktok.com"/></div>
+</div>
+<div class="form-actions di-actions">
+  <input type="submit" id="submit" value="Simpan" class="submit-button"/>
+  <a class="submit-button button-secondary" href="/">Kembali</a>
+</div>
+</form>';
+tng_ui_card_end();
+
+tng_ui_page_end('digtest.php');
 ?>

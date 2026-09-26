@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/includes/state_store.php';
+require_once __DIR__ . '/includes/ui.php';
 error_reporting(0);
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
@@ -22,59 +23,45 @@ if($_POST['hosts'] ?? null) {
     trustng_state_write('hosts6.data', str_replace("\r\n", "\n", $data6) . "\n");
     trustng_run_panel_script('sethosts.sh');
     trustng_state_touch('setdns.new');
-    echo "<script>alert('Hosts File telah disimpan, silahkan reload atau reboot untuk mengaktifkan');</script>";
+    $notice = 'Hosts File telah disimpan. Jalankan Maintenance → Reload untuk mengaktifkan perubahan.';
     $index = 'yes'; $back = 'history.go(-2)';
 }
 
-if ($referer != "https://$myip:40443/" && $referer != "https://$myip:40443/index.php") {
-        if (!isset($index) || $index !== 'yes') exit(0);
+if (strpos($referer, $allowed_prefix) !== 0 && strpos($referer, $allowed_prefix_ip) !== 0) {
+    if (!isset($index) || $index !== 'yes') exit(0);
 }
 
 $file4 = trustng_state_lines('hosts.data');
 $file6 = trustng_state_lines('hosts6.data');
 $useip6 = file_get_contents('setip6');
 
-echo '<!DOCTYPE html>
-<html lang="id">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" type="text/css" href="style.css" />
-<title>DNS TRUST-NG - HOSTS FILE</title>
-<script src="kunci.js"></script>
-</head>
-<body class="with-sidebar sidebar-collapsed">
-<div id="sidebar-overlay"></div>
-<div class="page-shell">';
-include_once 'menu.php';
-trustng_render_sidebar('hosts.php');
+tng_ui_page_start('hosts.php', 'Hosts File', 'Override DNS lokal. Format hosts file: ip_address domain_name. IP referensi: ' . trim($ipaddr));
+if (!empty($notice)) tng_ui_notice('success', 'Perubahan tersimpan', $notice);
+tng_ui_card_start('Hosts File', 'Warning, salah isi DNS bisa tidak berfungsi.');
 
-echo '<div class="page-content">';
-echo '<div class="tng-topbar"><button class="tng-topbar-toggle" title="Toggle menu" aria-label="Toggle menu"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="4.5" width="16" height="2" rx="1" fill="currentColor"/><rect x="2" y="9" width="16" height="2" rx="1" fill="currentColor"/><rect x="2" y="13.5" width="16" height="2" rx="1" fill="currentColor"/></svg></button><span class="tng-topbar-title">Hosts File</span><div class="tng-topbar-spacer"></div><a class="tng-topbar-back" href="/">&#8592; Dashboard</a></div>';
-echo '
-<div align=center>
-<a href="/"><img src="img/trustng-small.jpg" width="200px"></a>
-<form name="domforward" action="hosts.php" method="post">
-<p>
-<h3>Hosts File<br><small>'.$ipaddr.'</small></h3>
-<small>format hosts file: ip_address domain_name<br>warning, salah isi dns bisa tidak berfungsi!</small><br>
-IPv4
-<div class="areatxt"><textarea rows="10" cols="20" name="data" autofocus="autofocus"'; echo "placeholder='contoh:\n192.168.2.1 gateway.hotspot.local\n0.0.0.0 dns.google\n10.0.1.10 localserver'>";
-foreach($file4 as $text) { echo $text; }
-echo '</textarea></div>';
+echo '<form name="domforward" action="hosts.php" method="post">';
+echo '<div class="tng-field field"><label>IPv4</label><div class="areatxt"><textarea rows="10" cols="20" name="data" autofocus="autofocus" placeholder="contoh:
+192.168.2.1 gateway.hotspot.local
+0.0.0.0 dns.google
+10.0.1.10 localserver">';
+foreach($file4 as $text) { echo htmlspecialchars($text, ENT_QUOTES, 'UTF-8'); }
+echo '</textarea></div></div>';
 if ($useip6 == 'yes') { echo '
-IPv6
-<div class="areatxt"><textarea rows="10" cols="20" name="data6"'; echo "placeholder='contoh:\n::1 gateway.hotspot.local\n::2 dns.google\n::3 localservice'>";
-foreach($file6 as $text) { echo $text; }
-echo '</textarea></div>'; }
-echo '<input type="hidden" name="hosts" value="submit">
-<input type="submit" id="submit" value="Simpan" class="submit-button"/> <a href="/"> <input type="button" class="submit-button" value="Kembali"></a>
-</form>
-<p><small><b>&#169; 2024 Kominfo</b></small>
-</div>';
+<div class="tng-field field"><label>IPv6</label><div class="areatxt"><textarea rows="10" cols="20" name="data6" placeholder="contoh:
+::1 gateway.hotspot.local
+::2 dns.google
+::3 localservice">';
+foreach($file6 as $text) { echo htmlspecialchars($text, ENT_QUOTES, 'UTF-8'); }
+echo '</textarea></div></div>'; }
+echo '
+<input type="hidden" name="hosts" value="submit">
+<div class="form-actions di-actions">
+  <input type="submit" id="submit" value="Simpan" class="submit-button"/>
+  <a class="submit-button button-secondary" href="/">Kembali</a>
+</div>
+</form>';
+tng_ui_card_end();
 
-echo '</div></div>';
+echo '<script src="kunci.js"></script>';
+tng_ui_page_end('hosts.php');
 ?>

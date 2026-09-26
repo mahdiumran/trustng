@@ -15,12 +15,14 @@ function diEsc(s) {
 
 function diRow(r) {
   var recs = [];
+  var status = DI_LABEL[r.status] ? r.status : 'unknown';
+  var label = DI_LABEL[r.status] || { text: r.status || 'Unknown', icon: 'fa-circle-question' };
   if (r.a && r.a.length) recs.push('A: ' + r.a.join(', '));
   if (r.aaaa && r.aaaa.length) recs.push('AAAA: ' + r.aaaa.join(', '));
   return '<div class="di-row">' +
-    '<span class="di-dot ' + r.status + '"></span>' +
+    '<span class="di-dot ' + status + '"></span>' +
     '<span class="di-domain" title="' + diEsc(r.domain) + '">' + diEsc(r.domain) + '</span>' +
-    '<span class="di-status ' + r.status + '"><i class="fa-solid ' + DI_LABEL[r.status].icon + '"></i> ' + DI_LABEL[r.status].text + '</span>' +
+    '<span class="di-status ' + status + '"><i class="fa-solid ' + label.icon + '"></i> ' + diEsc(label.text) + '</span>' +
     '<span class="di-recs">' + diEsc(recs.join(' · ') || '—') + '</span>' +
     '</div>';
 }

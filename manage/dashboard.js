@@ -19,6 +19,25 @@
   var lastTotal = null;
   var lastTotalTime = null;
   var resourceHistory = {};
+  var lastDonutData = null;
+  var lastForwardData = null;
+
+  function themeColor(name, fallback) {
+    var value = window.getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return value || fallback;
+  }
+
+  function colorWithAlpha(color, alpha) {
+    var hex = color.match(/^#([\da-f]{3}|[\da-f]{6})$/i);
+    if (hex) {
+      var value = hex[1];
+      if (value.length === 3) value = value.split('').map(function (part) { return part + part; }).join('');
+      return 'rgba(' + parseInt(value.slice(0, 2), 16) + ', ' + parseInt(value.slice(2, 4), 16) + ', ' + parseInt(value.slice(4, 6), 16) + ', ' + alpha + ')';
+    }
+    var rgb = color.match(/^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i);
+    if (rgb) return 'rgba(' + rgb[1] + ', ' + rgb[2] + ', ' + rgb[3] + ', ' + alpha + ')';
+    return color;
+  }
 
   // --- Blocklist chart state ---
   var blCtx = blChart ? blChart.getContext("2d") : null;
@@ -105,7 +124,7 @@
     var plotH = height - pad * 2;
     var maxValue = Math.max.apply(null, points.map(function (p) { return p.value; }).concat([1]));
 
-    ctx.strokeStyle = "rgba(0, 242, 255, 0.08)";
+    ctx.strokeStyle = themeColor("--border", "rgba(0, 109, 54, 0.12)");
     ctx.lineWidth = 1;
     for (var i = 0; i < 4; i++) {
       var y = pad + (plotH / 3) * i;
@@ -124,15 +143,16 @@
       if (index === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     });
-    ctx.strokeStyle = "#00f2ff";
+    ctx.strokeStyle = themeColor("--primary", "#006d36");
     ctx.lineWidth = 2;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
     ctx.stroke();
 
     var gradient = ctx.createLinearGradient(0, pad, 0, height - pad);
-    gradient.addColorStop(0, "rgba(0, 242, 255, 0.18)");
-    gradient.addColorStop(1, "rgba(0, 242, 255, 0)");
+    var primary = themeColor("--primary", "#006d36");
+    gradient.addColorStop(0, colorWithAlpha(primary, 0.16));
+    gradient.addColorStop(1, colorWithAlpha(primary, 0));
 
     ctx.lineTo(pad + (plotW / Math.max(maxPoints - 1, 1)) * (points.length - 1), height - pad);
     ctx.lineTo(pad, height - pad);
@@ -145,7 +165,7 @@
     var holder = document.createElement("div");
     holder.innerHTML = html;
     var text = holder.textContent || holder.innerText || "";
-    if (rawNode) rawNode.innerHTML = html;
+    if (rawNode) rawNode.textContent = text;
     pushPoint(extractStat(text));
     pushBlockedPoint(extractBlockedStat(text));
   }
@@ -215,7 +235,7 @@
     var maxValue = Math.max.apply(null, blPoints.map(function (p) { return p.value; }).concat([1]));
 
     // Grid lines
-    blCtx.strokeStyle = "rgba(255, 207, 212, 0.06)";
+     blCtx.strokeStyle = themeColor("--border", "rgba(186, 26, 26, 0.12)");
     blCtx.lineWidth = 1;
     for (var i = 0; i < 4; i++) {
       var y = pad + (plotH / 3) * i;
@@ -235,7 +255,7 @@
       if (index === 0) blCtx.moveTo(x, y);
       else blCtx.lineTo(x, y);
     });
-    blCtx.strokeStyle = "#ffcfd4";
+     blCtx.strokeStyle = themeColor("--critical", "#ba1a1a");
     blCtx.lineWidth = 2;
     blCtx.lineJoin = "round";
     blCtx.lineCap = "round";
@@ -243,8 +263,9 @@
 
     // Area fill
     var gradient = blCtx.createLinearGradient(0, pad, 0, height - pad);
-    gradient.addColorStop(0, "rgba(255, 207, 212, 0.18)");
-    gradient.addColorStop(1, "rgba(255, 207, 212, 0)");
+     var blockedColor = themeColor("--critical", "#ba1a1a");
+     gradient.addColorStop(0, colorWithAlpha(blockedColor, 0.16));
+     gradient.addColorStop(1, colorWithAlpha(blockedColor, 0));
 
     blCtx.lineTo(pad + (plotW / Math.max(maxPoints - 1, 1)) * (blPoints.length - 1), height - pad);
     blCtx.lineTo(pad, height - pad);
@@ -268,10 +289,22 @@
     request.send();
   }
 
+  function formatDuration(seconds) {
+    seconds = Math.max(0, Math.floor(Number(seconds) || 0));
+    var days = Math.floor(seconds / 86400);
+    var hours = Math.floor((seconds % 86400) / 3600);
+    var minutes = Math.floor((seconds % 3600) / 60);
+    return (days ? days + "h " : "") + hours + "j " + minutes + "m";
+  }
+
   function updateHero(data) {
     var heroTotal = document.getElementById("heroTotal");
     var heroBlocked = document.getElementById("heroBlocked");
     var heroRate = document.getElementById("heroRate");
+    var cacheRatio = document.getElementById("cacheRatioValue");
+    var activeRequests = document.getElementById("activeRequestCount");
+    var resolverUptime = document.getElementById("resolverUptime");
+    var recursionAverage = document.getElementById("recursionAverage");
     if (data.error) {
       if (heroTotal) heroTotal.textContent = "—";
       if (heroBlocked) heroBlocked.textContent = "—";
@@ -284,6 +317,10 @@
     if (heroTotal) heroTotal.textContent = q.toLocaleString("en-US");
     if (heroBlocked) heroBlocked.textContent = b.toLocaleString("en-US");
     if (heroRate) { heroRate.textContent = rate; heroRate.removeAttribute("title"); }
+    if (cacheRatio) cacheRatio.textContent = Number(data.cache_ratio || 0).toFixed(1) + "%";
+    if (activeRequests) activeRequests.textContent = String(data.request_current || 0);
+    if (resolverUptime) resolverUptime.textContent = formatDuration(data.uptime || 0);
+    if (recursionAverage) recursionAverage.textContent = data.recursion_avg_ms > 0 ? Number(data.recursion_avg_ms).toFixed(3) + " ms" : "—";
   }
 
   function refreshHero() {
@@ -293,12 +330,18 @@
   // --- Donut chart (query types) ---
   var donutCanvas = document.getElementById("donutChart");
   var donutCtx = donutCanvas ? donutCanvas.getContext("2d") : null;
-  var donutColors = ["#00f2ff", "#27ff97", "#ffcfd4", "#ffc857", "#b9cacb", "#849495"];
+   var donutColors = ["#006d36", "#4ade80", "#ba1a1a", "#b45309", "#31694b", "#6d7b6d"];
 
   function drawDonut(data) {
-    if (!donutCanvas || !donutCtx) return;
-    var keys = Object.keys(data);
-    if (keys.length === 0) return;
+    if (data && typeof data === "object" && !Array.isArray(data)) lastDonutData = data;
+    data = lastDonutData;
+    if (!donutCanvas || !donutCtx || !data) return;
+    var legend = document.getElementById("donutLegend");
+    var keys = Object.keys(data).filter(function (key) { return key.charAt(0) !== "_" && isFinite(Number(data[key])); });
+    if (keys.length === 0) {
+      if (legend) legend.innerHTML = '<div class="empty-state"><i class="fa-solid fa-inbox" aria-hidden="true"></i><span>Belum ada sampel cache.</span></div>';
+      return;
+    }
 
     var ratio = window.devicePixelRatio || 1;
     var w = 180, h = 180;
@@ -331,13 +374,13 @@
     });
 
     // Center text
-    donutCtx.fillStyle = "#e1e2eb";
+     donutCtx.fillStyle = themeColor("--text-primary", "#111827");
     donutCtx.font = "500 20px 'JetBrains Mono', monospace";
     donutCtx.textAlign = "center";
     donutCtx.textBaseline = "middle";
     donutCtx.fillText(total.toLocaleString("en-US"), cx, cy - 6);
     donutCtx.font = "400 10px 'Inter', sans-serif";
-    donutCtx.fillStyle = "#8a9aae";
+     donutCtx.fillStyle = themeColor("--text-muted", "#6b7280");
     donutCtx.fillText("queries", cx, cy + 12);
     // Legend
     var legend = document.getElementById("donutLegend");
@@ -347,8 +390,8 @@
         var pct = ((data[key] / total) * 100).toFixed(1);
         var item = document.createElement("div");
         item.className = "tng-donut-legend-item";
-        item.innerHTML = '<span class="tng-donut-legend-dot" style="background:' + donutColors[i % donutColors.length] + '"></span>' +
-          '<span class="tng-donut-legend-label">' + key + '</span>' +
+      item.innerHTML = '<span class="tng-donut-legend-dot" style="background:' + donutColors[i % donutColors.length] + '"></span>' +
+          '<span class="tng-donut-legend-label">' + safeText(key) + '</span>' +
           '<span class="tng-donut-legend-val">' + pct + '%</span>';
         legend.appendChild(item);
       });
@@ -356,26 +399,39 @@
   }
 
   // --- Forward destination bars ---
+  function safeText(value) {
+    return String(value).replace(/[&<>"']/g, function (char) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char];
+    });
+  }
+
   function drawForwardBars(data) {
+    if (data && typeof data === "object" && !Array.isArray(data)) lastForwardData = data;
+    data = lastForwardData;
     var container = document.getElementById("forwardBars");
     if (!container) return;
-    var keys = Object.keys(data);
-    if (keys.length === 0) return;
+    var keys = data ? Object.keys(data) : [];
+    if (keys.length === 0) {
+      container.innerHTML = '<div class="empty-state"><i class="fa-solid fa-inbox" aria-hidden="true"></i><span>Belum ada trafik menuju cache maupun parent resolver.</span></div>';
+      return;
+    }
 
     var total = 0;
     keys.forEach(function (k) { total += data[k]; });
-    if (total === 0) return;
+    if (total === 0) {
+      container.innerHTML = '<div class="empty-state"><i class="fa-solid fa-inbox" aria-hidden="true"></i><span>Belum ada trafik menuju cache maupun parent resolver.</span></div>';
+      return;
+    }
 
     container.innerHTML = "";
     keys.forEach(function (key, i) {
       var val = data[key];
       var pct = (val / total) * 100;
-      var color = i === 0 ? "#00f2ff" : "#27ff97";
-      if (key.indexOf("Resolver") === -1 && key !== "Local Cache") color = "#ffcfd4";
+       var color = i === 0 ? themeColor("--primary", "#006d36") : themeColor("--info", "#31694b");
 
       var item = document.createElement("div");
       item.className = "tng-forward-bar-item";
-      item.innerHTML = '<span class="tng-forward-bar-label">' + key + '</span>' +
+      item.innerHTML = '<span class="tng-forward-bar-label">' + safeText(key) + '</span>' +
         '<span class="tng-forward-bar-track"><span class="tng-forward-bar-fill" style="width:' + pct.toFixed(1) + '%;background:' + color + '"></span></span>' +
         '<span class="tng-forward-bar-val">' + Math.round(pct) + '%</span>';
       container.appendChild(item);
@@ -450,6 +506,66 @@
     request.send();
   }
 
+  var requestRows = document.getElementById("requestLedgerRows");
+  var requestStatus = document.getElementById("requestLedgerStatus");
+  var requestRefresh = document.getElementById("requestRefresh");
+
+  function setRequestStatus(text, className) {
+    if (!requestStatus) return;
+    requestStatus.textContent = text;
+    requestStatus.className = "badge " + className;
+  }
+
+  function appendRequestCell(row, value) {
+    var cell = document.createElement("td");
+    cell.textContent = value;
+    row.appendChild(cell);
+  }
+
+  function renderRequests(data) {
+    if (!requestRows) return;
+    requestRows.innerHTML = "";
+    if (!data || !data.ok) {
+      requestRows.innerHTML = '<tr><td colspan="6"><div class="error-state"><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i><strong>Request list tidak tersedia</strong><span>Periksa koneksi unbound-control.</span></div></td></tr>';
+      setRequestStatus("Error", "badge-err");
+      return;
+    }
+    if (!data.requests || data.requests.length === 0) {
+      requestRows.innerHTML = '<tr><td colspan="6"><div class="empty-state"><i class="fa-solid fa-circle-check" aria-hidden="true"></i><strong>Tidak ada request aktif</strong><span>Pipeline resolver sedang kosong. Data akan diperbarui otomatis.</span></div></td></tr>';
+      setRequestStatus("0 aktif", "badge-ok");
+      return;
+    }
+    data.requests.forEach(function (request) {
+      var row = document.createElement("tr");
+      appendRequestCell(row, request.thread);
+      appendRequestCell(row, request.name);
+      appendRequestCell(row, request.type);
+      appendRequestCell(row, request.class);
+      appendRequestCell(row, request.seconds + " s");
+      appendRequestCell(row, request.detail || "—");
+      requestRows.appendChild(row);
+    });
+    setRequestStatus(data.requests.length + " aktif", "badge-warn");
+  }
+
+  function refreshRequests() {
+    if (!requestRows) return;
+    var req = new XMLHttpRequest();
+    req.open("GET", "dashboard_requests.php?_=" + Date.now(), true);
+    req.onreadystatechange = function () {
+      if (req.readyState !== 4) return;
+      if (req.status < 200 || req.status >= 300) {
+        renderRequests({ ok: false });
+        return;
+      }
+      try { renderRequests(JSON.parse(req.responseText)); }
+      catch (e) { renderRequests({ ok: false }); }
+    };
+    req.send();
+  }
+
+  if (requestRefresh) requestRefresh.addEventListener("click", refreshRequests);
+
   if (rawNode && rawNode.textContent.trim() !== "") {
     pushPoint(extractStat(rawNode.textContent));
     pushBlockedPoint(extractBlockedStat(rawNode.textContent));
@@ -462,13 +578,24 @@
   refreshQueries();
   refreshResources();
   refreshAnalytics();
+  refreshRequests();
   setInterval(refreshHero, 10000);
   setInterval(refreshQueries, 5000);
   setInterval(refreshResources, 5000);
   setInterval(refreshAnalytics, 10000);
-  window.addEventListener("resize", function () {
+  setInterval(refreshRequests, 5000);
+  function redrawAll() {
     drawChart();
     drawBlockedChart();
     drawDonut();
+    drawForwardBars();
+  }
+
+  window.tngOnThemeChange = redrawAll;
+
+  var resizeTimer = null;
+  window.addEventListener("resize", function () {
+    if (resizeTimer) window.clearTimeout(resizeTimer);
+    resizeTimer = window.setTimeout(redrawAll, 120);
   });
 })();

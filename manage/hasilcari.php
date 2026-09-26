@@ -2,35 +2,36 @@
 error_reporting(0);
 $file = file("hasilcari.txt");
 $ipaddr = shell_exec("ifconfig eth0 | grep netmask | sed 's/ .*inet //;s/ .*//'");
-echo '<html>
-<head>
-<meta http-equiv="X-UA-Compatible" content="IE=edge"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" type="text/css" href="style.css" />
-<title>DNS TRUST-NG - TRUST+ SEARCH RESULT</title>
-<script src="/jquery.min.js"></script>
-</head>
-<body class="with-sidebar">';
-include_once 'menu.php';
-trustng_render_sidebar('dbtrust.php');
-echo '
-<div align=center>
-<a href="/"><img src="img/logo-img/trust-ng.jpg" width="200px"></a>
-<script>
-    $("document").ready(function(){
-    $("#line_numbers").linenumbers({col_width:"50px"});
-    })
-</script>
-<script src="linear.js"></script>
-<p>
-<h3>Hasil Pencarian<br><small>'.$ipaddr.'</small></h3><h4>Database Trust+ untuk keyword "'.htmlspecialchars($keyword, ENT_QUOTES, 'UTF-8').'"</h4>
-<div class="areatxt"><textarea rows="10" cols="60" name="data"  id="line_numbers" autofocus="autofocus">';
-foreach($file as $text) { echo $text; }
-echo '</textarea></div>
-<input type="button"  onclick="history.back()" class="submit-button" value="Kembali">
-<p><small><b>&#169; 2024 Kominfo</b></small>
-</div>';
+
+require_once __DIR__ . '/includes/ui.php';
+
+tng_ui_page_start('dbtrust.php', 'Hasil Pencarian', 'Database Trust+ untuk keyword "' . (isset($keyword) ? $keyword : '') . '".');
 ?>
+<div data-page-actions>
+  <a class="button button-secondary button-small" href="dbtrust.php"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Kembali ke Pencarian</a>
+</div>
+
+<div class="stack">
+  <div class="card">
+    <div class="card-header">
+      <div>
+        <h2>Hasil Pencarian</h2>
+        <p>Host @<span class="di-server"><?php echo tng_e(trim((string) $ipaddr)); ?></span></p>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="areatxt"><textarea rows="10" cols="60" name="data" id="line_numbers" autofocus="autofocus"><?php
+foreach ($file as $text) { echo tng_e($text); }
+?></textarea></div>
+    </div>
+  </div>
+
+  <div class="di-actions">
+    <button type="button" class="button button-secondary" onclick="history.back()">Kembali</button>
+  </div>
+</div>
+<?php
+echo '<script src="/jquery.min.js"></script>';
+echo '<script src="linear.js"></script>';
+echo '<script>(function(){if(window.jQuery&&jQuery.fn.linenumbers){jQuery("#line_numbers").linenumbers({col_width:"50px"});}})();</script>';
+tng_ui_page_end('dbtrust.php');

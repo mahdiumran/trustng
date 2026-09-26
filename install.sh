@@ -14,12 +14,13 @@ echo "[INFO] Installing dependencies..."
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     nginx php8.2-fpm php-sqlite3 php8.2-cli dos2unix \
-    curl dnsutils python3 systemd openssl adduser passwd sqlite3 \
+    curl dnsutils python3 systemd openssl adduser passwd sqlite3 sudo iproute2 util-linux dns-root-data \
+    net-tools bc lm-sensors snmpd openssh-server procps \
     libevent-2.1-7 libevent-dev \
     munin munin-node \
     || {
         echo "[WARN] Bulk install gagal — coba per-package"
-        for p in nginx php8.2-fpm php-sqlite3 php8.2-cli dos2unix curl dnsutils python3 sqlite3 libevent-2.1-7 libevent-dev munin munin-node openssl adduser passwd; do
+        for p in nginx php8.2-fpm php-sqlite3 php8.2-cli dos2unix curl dnsutils python3 sqlite3 sudo iproute2 util-linux dns-root-data net-tools bc lm-sensors snmpd openssh-server procps libevent-2.1-7 libevent-dev munin munin-node openssl adduser passwd; do
             dpkg -s "$p" >/dev/null 2>&1 || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$p" 2>&1 | tail -n 3 || echo "[WARN] $p gagal"
         done
     }
@@ -42,7 +43,7 @@ ensure_pkg() {
 }
 # Map command -> package (Debian 12/13: php-fpm bisa 8.2 atau generic)
 MISSING=""
-for cmd in curl dig python3 systemctl openssl php useradd nginx php-fpm sqlite3; do
+for cmd in curl dig python3 systemctl openssl php useradd nginx php-fpm sqlite3 sudo visudo ip ifconfig flock bc sensors snmpd sshd top dos2unix; do
     if [ "$cmd" = "php-fpm" ]; then
         command -v php-fpm8.2 >/dev/null 2>&1 || command -v php-fpm >/dev/null 2>&1 || MISSING="$MISSING php-fpm"
         continue
@@ -51,7 +52,7 @@ for cmd in curl dig python3 systemctl openssl php useradd nginx php-fpm sqlite3;
         command -v php >/dev/null 2>&1 || MISSING="$MISSING php"
         continue
     fi
-    command -v $cmd >/dev/null 2>&1 || MISSING="$MISSING $cmd"
+    command -v "$cmd" >/dev/null 2>&1 || MISSING="$MISSING $cmd"
 done
 # dev libs tidak punya binary — cek via dpkg
 for pkg in libevent-dev sqlite3; do
@@ -72,22 +73,36 @@ if [ -n "$MISSING" ]; then
             nginx) ensure_pkg nginx ;;
             php-fpm) ensure_pkg php8.2-fpm || ensure_pkg php-fpm ;;
             sqlite3) ensure_pkg sqlite3; ensure_pkg php8.2-sqlite3 2>/dev/null || ensure_pkg php-sqlite3 ;;
+            sudo|visudo) ensure_pkg sudo ;;
+            ip) ensure_pkg iproute2 ;;
+            ifconfig) ensure_pkg net-tools ;;
+            flock) ensure_pkg util-linux ;;
+            bc) ensure_pkg bc ;;
+            sensors) ensure_pkg lm-sensors ;;
+            snmpd) ensure_pkg snmpd ;;
+            sshd) ensure_pkg openssh-server ;;
+            top) ensure_pkg procps ;;
+            dos2unix) ensure_pkg dos2unix ;;
             libevent-dev) ensure_pkg libevent-dev; ensure_pkg libevent-2.1-dev 2>/dev/null || true; ensure_pkg libevent-core-2.1-7 2>/dev/null || true ;;
         esac
     done
     # re-check
     STILL=""
-    for cmd in curl dig python3 systemctl openssl php useradd nginx php-fpm sqlite3; do
+    for cmd in curl dig python3 systemctl openssl php useradd nginx php-fpm sqlite3 sudo visudo ip ifconfig flock bc sensors snmpd sshd top dos2unix; do
         if [ "$cmd" = "php-fpm" ]; then command -v php-fpm8.2 >/dev/null 2>&1 || command -v php-fpm >/dev/null 2>&1 || STILL="$STILL php-fpm8.2"; continue; fi
         if [ "$cmd" = "php" ]; then command -v php >/dev/null 2>&1 || STILL="$STILL php"; continue; fi
         if [ "$cmd" = "sqlite3" ]; then command -v sqlite3 >/dev/null 2>&1 || STILL="$STILL sqlite3"; continue; fi
-        command -v $cmd >/dev/null 2>&1 || STILL="$STILL $cmd"
+        command -v "$cmd" >/dev/null 2>&1 || STILL="$STILL $cmd"
     done
     for pkg in libevent-dev; do dpkg -s "$pkg" >/dev/null 2>&1 || STILL="$STILL $pkg"; done
     if [ -n "$STILL" ]; then
         echo "ERROR: dependencies tetap belum terinstall:$STILL — install manual lalu ulangi ./install.sh" >&2
         exit 1
     fi
+fi
+if ! php -m | grep -qi '^pdo_sqlite$'; then
+    echo "ERROR: ekstensi PHP pdo_sqlite belum aktif" >&2
+    exit 1
 fi
 # munin optional — auto-install juga agar munin.conf line 279 tidak not found, tapi tidak fatal
 for pkg in munin munin-node; do
@@ -105,7 +120,7 @@ fi
 echo "[OK] Semua dependencies terinstall (core + munin optional)"
 
 # ---- 3. Bundel artifacts check
-required="bin/unbound bin/unbound-checkconf bin/unbound-control scripts/create_domain_cdb.py scripts/update-blocklist conf/unbound.conf conf/sources.txt conf/nftables.conf"
+required="bin/unbound bin/unbound-checkconf bin/unbound-control scripts/create_domain_cdb.py scripts/update-blocklist scripts/resetpass.sh scripts/trustng-metrics-sampler conf/unbound.conf conf/sources.txt conf/nftables.conf systemd/unbound-override.conf systemd/update-blocklist.service systemd/update-blocklist.timer systemd/trustng-metrics.service systemd/trustng-metrics.timer manage/index.php manage/manage.php manage/menu.php manage/style.css manage/includes/auth.php manage/includes/auth_guard.php manage/includes/ui.php manage/repairmunin.sh manage/resetmunin.sh"
 for f in $required; do
     test -s "$DEPLOY_DIR/$f" || { echo "ERROR: artifact hilang: $f" >&2; exit 1; }
 done
@@ -196,6 +211,7 @@ install -m 0755 "$DEPLOY_DIR/scripts/update-blocklist"     /usr/local/sbin/updat
 [ -f "$DEPLOY_DIR/scripts/resetpass.sh" ] && install -m 0755 "$DEPLOY_DIR/scripts/resetpass.sh" /usr/local/sbin/resetpass.sh
 [ -f "$DEPLOY_DIR/scripts/trustng-metrics-sampler" ] && install -m 0755 "$DEPLOY_DIR/scripts/trustng-metrics-sampler" /usr/local/sbin/trustng-metrics-sampler
 [ -f "$DEPLOY_DIR/manage/repairmunin.sh" ] && install -m 0755 "$DEPLOY_DIR/manage/repairmunin.sh" /usr/local/sbin/repairmunin.sh
+[ -f "$DEPLOY_DIR/manage/resetmunin.sh" ] && install -m 0755 "$DEPLOY_DIR/manage/resetmunin.sh" /usr/local/sbin/resetmunin.sh
 
 # ---- 5. Unbound config (idempotent)
 [ -f /etc/unbound/unbound.conf ] || install -m 0644 "$DEPLOY_DIR/conf/unbound.conf" /etc/unbound/unbound.conf
@@ -280,6 +296,7 @@ while IFS= read -r -d '' source; do
         *.data|*.data.set|*.db|*.dig|*.ip|*.log|*.new|*.pending|*.bak|*.lock|*.key) continue ;;
         .htpasswd|setup.mulai|recovery.key|gauge.dat|top1.dat|hasilcari.txt|nextjob.sh) continue ;;
         ip6.loopback|reload.lock) continue ;;
+        img/logo-img/trust-ng.jpg|img/trustng-small.jpg) [ -e "$WEBROOT/$relative" ] && continue ;;
         AGENTS.md|DESIGN.md|tests_port_config.php|backup-*/*) continue ;;
     esac
     destination="$WEBROOT/$relative"
@@ -296,7 +313,7 @@ find "$WEBROOT" -type f -exec chown www-data:www-data {} + 2>/dev/null \; -exec 
 find "$WEBROOT" -type f -name '*.sh' -exec chmod 0755 {} + 2>/dev/null || true
 
 # Panel runtime state
-for name in forwarder.data resolver.data hosts.data hosts6.data ipaddr.data ip6addr.data ipalias.data ipalias6.data owner.data clients.ip clients6.ip whitelist.db blacklist.local.db lp1.ip lp2.ip lp3.ip lp4.ip lp5.ip lp6.ip setsafesearch settproxy setdnssec setsnmpd setip6 ip6auto ssh.port ssl.port snmpd.community; do
+for name in forwarder.data resolver.data hosts.data hosts6.data ipaddr.data ip6addr.data ipalias.data ipalias6.data owner.data clients.ip clients6.ip whitelist.db blacklist.local.db lp1.ip lp2.ip lp3.ip lp4.ip lp5.ip lp6.ip setsafesearch settproxy setdnssec setsnmpd setip6 ip6auto ssh.port ssl.port snmpd.community d0.dig d1.dig d2.dig d3.dig d4.dig d5.dig d6.dig d7.dig d8.dig d9.dig; do
     [ -e "$WEBROOT/$name" ] || : > "$WEBROOT/$name"
     chown www-data:www-data "$WEBROOT/$name"
     chmod 0664 "$WEBROOT/$name"
@@ -347,7 +364,7 @@ systemctl daemon-reload
 # ---- 10. Initial blocklist
 if [ ! -s /etc/unbound/db/blacklist.db ]; then
     echo "[INFO] blacklist.db belum ada — jalankan updater awal (bisa lama, download ~60MB)"
-    /usr/local/sbin/update-blocklist || echo "[WARN] updater awal gagal; timer akan mencoba lagi"
+    SKIP_HEALTHCHECK=1 /usr/local/sbin/update-blocklist || { echo "ERROR: updater awal gagal; Unbound patched memerlukan blacklist.db" >&2; exit 1; }
 else
     chown unbound:unbound /etc/unbound/db/blacklist.db 2>/dev/null || true
 fi
@@ -364,14 +381,21 @@ systemctl restart unbound
 sleep 3
 systemctl is-active unbound >/dev/null || { echo "ERROR: unbound gagal start — cek journalctl -u unbound" >&2; exit 1; }
 
+# ---- 12. Metrics history sampler
+install -d -o www-data -g www-data -m 0750 /var/lib/trustng-metrics
+install -m 0644 "$DEPLOY_DIR/systemd/trustng-metrics.service" /etc/systemd/system/
+install -m 0644 "$DEPLOY_DIR/systemd/trustng-metrics.timer" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now trustng-metrics.timer
+
 # ---- 13. Munin + Nginx integration
 MUNIN_DOMAIN=$(hostname -d 2>/dev/null)
 [ -z "$MUNIN_DOMAIN" ] && MUNIN_DOMAIN="localdomain"
 MUNIN_HOST=$(hostname -s 2>/dev/null || hostname)
 
 # Munin config — buat meskipun package munin gagal (agar line 260 tidak not found diam)
-mkdir -p /etc/munin 2>/dev/null || true
-if [ ! -f /etc/munin/munin.conf ] || ! grep -q '^\[' /etc/munin/munin.conf 2>/dev/null; then
+if getent passwd munin >/dev/null 2>&1; then
+    mkdir -p /etc/munin/plugin-conf.d
     cat > /etc/munin/munin.conf <<EOF
 # TRUST-NG generated munin.conf (domain=$MUNIN_DOMAIN host=$MUNIN_HOST)
 dbdir    /var/lib/munin
@@ -388,41 +412,43 @@ timeout 60
     use_node_name yes
 EOF
     echo "[OK] munin.conf (domain=$MUNIN_DOMAIN host=$MUNIN_HOST)"
-fi
-# Jika munin-node binary tetap absen, skip enable tapi jangan crash update.sh/install.sh
-if ! command -v munin-node >/dev/null 2>&1 && ! dpkg -s munin-node >/dev/null 2>&1; then
-    echo "[WARN] munin-node tidak terinstall — skip enable munin-node (install manual: apt install munin-node)" >&2
+else
+    echo "[WARN] Munin tidak tersedia; integrasi graph dilewati" >&2
 fi
 
 # Munin cron variants for panel repair/reset
-cat > /bin/munin-cron.full <<'EOF'
+if getent passwd munin >/dev/null 2>&1; then
+    cat > /bin/munin-cron.full <<'EOF'
 #!/bin/bash
 /usr/share/munin/munin-update  "$@" || exit 1
 /usr/share/munin/munin-limits  "$@"
 /usr/share/munin/munin-html    "$@" || exit 1
 /usr/share/munin/munin-graph --cron "$@" || exit 1
 EOF
-chmod +x /bin/munin-cron.full
-[ -f /bin/munin-cron ] || cp -f /bin/munin-cron.full /bin/munin-cron
-cp -f /bin/munin-cron.full /bin/munin-cron.old
-cp -f /bin/munin-cron.full /bin/munin-cron.new
-chmod +x /bin/munin-cron /bin/munin-cron.old /bin/munin-cron.new
+    chmod +x /bin/munin-cron.full
+    [ -f /bin/munin-cron ] || cp -f /bin/munin-cron.full /bin/munin-cron
+    cp -f /bin/munin-cron.full /bin/munin-cron.old
+    cp -f /bin/munin-cron.full /bin/munin-cron.new
+    chmod +x /bin/munin-cron /bin/munin-cron.old /bin/munin-cron.new
+fi
 
-install -d -o munin -g munin -m 0755 /var/cache/munin/www /var/lib/munin /var/log/munin /var/run/munin
 # Munin unbound plugins — fix Permission denied for /etc/unbound/run/unbound.sock
-# Plugin default jalan sebagai nobody/munin, sedangkan socket 0660 unbound:unbound
-adduser munin unbound 2>/dev/null || true
-usermod -a -G unbound munin 2>/dev/null || true
-usermod -a -G unbound nobody 2>/dev/null || true
-cat > /etc/munin/plugin-conf.d/zzz-unbound <<'MUNINCONF'
+if getent passwd munin >/dev/null 2>&1; then
+    install -d -o munin -g munin -m 0755 /var/cache/munin/www /var/lib/munin /var/log/munin /var/run/munin
+    mkdir -p /etc/munin/plugin-conf.d
+    adduser munin unbound 2>/dev/null || true
+    usermod -a -G unbound munin 2>/dev/null || true
+    usermod -a -G unbound nobody 2>/dev/null || true
+    cat > /etc/munin/plugin-conf.d/zzz-unbound <<'MUNINCONF'
 [unbound*]
 user root
 env.unbound_conf /etc/unbound/unbound.conf
 env.unbound_control /usr/local/sbin/unbound-control
 MUNINCONF
-chmod 0644 /etc/munin/plugin-conf.d/zzz-unbound
-systemctl enable --now munin-node
-systemctl restart munin-node 2>/dev/null || true
+    chmod 0644 /etc/munin/plugin-conf.d/zzz-unbound
+    systemctl enable --now munin-node
+    systemctl restart munin-node 2>/dev/null || true
+fi
 
 # ---- 14. Nginx vhost (port 40443)
 NGINX_CONF="/etc/nginx/sites-available/trustng"
@@ -538,7 +564,7 @@ EOF
 fi
 
 # ---- 17. Sudoers for panel actions (group-based, proven from production)
-cat > /etc/sudoers.d/trustng-panel <<'EOF'
+cat > /etc/sudoers.d/trustng-manage <<'EOF'
 # TRUST-NG panel — NOPASSWD sudo rules for www-data group
 # Service management (broad)
 %www-data ALL=(root) NOPASSWD: /usr/sbin/service
@@ -570,11 +596,16 @@ cat > /etc/sudoers.d/trustng-panel <<'EOF'
 %www-data ALL=(root) NOPASSWD: /usr/bin/sh
 %www-data ALL=(root) NOPASSWD: /usr/bin/tee
 %www-data ALL=(root) NOPASSWD: /usr/local/sbin/repairmunin.sh
+%www-data ALL=(root) NOPASSWD: /usr/local/sbin/resetmunin.sh
 %www-data ALL=(root) NOPASSWD: /usr/local/sbin/update-blocklist
 %www-data ALL=(root) NOPASSWD: /usr/bin/systemctl start update-blocklist
 EOF
-chmod 440 /etc/sudoers.d/trustng-panel
-visudo -cf /etc/sudoers.d/trustng-panel && echo "[OK] sudoers panel installed"
+chmod 440 /etc/sudoers.d/trustng-manage
+visudo -cf /etc/sudoers.d/trustng-manage && echo "[OK] sudoers panel installed"
+if ! sudo -u www-data sudo -n /usr/sbin/service unbound status >/dev/null 2>&1; then
+    echo "ERROR: www-data belum dapat menjalankan maintenance Unbound via sudo NOPASSWD" >&2
+    exit 1
+fi
 
 # ---- 17. nftables firewall (DNS port 53 silent-drop)
 if command -v nft >/dev/null 2>&1; then

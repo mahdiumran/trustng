@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/includes/state_store.php';
+require_once __DIR__ . '/includes/ui.php';
 error_reporting(0);
 header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 header('Pragma: no-cache');
@@ -20,7 +21,7 @@ function trustng_write_interfaces($content)
     file_put_contents($tmp, $content);
     $output = [];
     $status = 1;
-    exec('sudo /usr/bin/cp ' . escapeshellarg($tmp) . ' /etc/network/interfaces 2>&1', $output, $status);
+    exec('sudo -n /usr/bin/cp ' . escapeshellarg($tmp) . ' /etc/network/interfaces 2>&1', $output, $status);
     @unlink($tmp);
     return $status === 0;
 }
@@ -149,7 +150,7 @@ iface eth0 inet6 dhcp
 
     if ($ifContent !== '') {
         trustng_write_interfaces($ifContent);
-        echo "<script>alert('Konfigurasi IP address berhasil disimpan.\nSilahkan buka menu Maintenance -> Reload System untuk mengaktifkan perubahan.');</script>";
+        $notice = 'Konfigurasi IP address berhasil disimpan. Jalankan Maintenance → Reload untuk mengaktifkan perubahan.';
     }
     $index = 'yes'; $back = 'history.go(-2)';
 }
@@ -160,8 +161,8 @@ if($_POST['ipalias'] ?? null) {
         $line = trim($line);
         if (isValidCIDR($line)) {
         } else if ($line !='') {
-            echo "<script>alert('$line tidak valid');history.back();</script>";
-            $problem4 = 'yes';
+                    $error = $line . ' tidak valid';
+                    $problem4 = 'yes';
             break;
         }
     }
@@ -170,8 +171,8 @@ if($_POST['ipalias'] ?? null) {
         $line = trim($line);
         if (isValidCIDR($line)) {
         } else if ($line !='') {
-            echo "<script>alert('$line tidak valid');history.back();</script>";
-            $problem6 = 'yes';
+                    $error = $line . ' tidak valid';
+                    $problem6 = 'yes';
             break;
         }
     }
@@ -187,7 +188,7 @@ if($_POST['ipalias'] ?? null) {
         trustng_state_touch('setalias.new');
     }
     if (($problem4 ?? '') != 'yes' && ($problem6 ?? '') != 'yes') {
-        echo "<script>alert('IP alias berhasil disimpan.\nSilahkan buka menu Maintenance -> Reload System untuk mengaktifkan perubahan.');</script>";
+            $notice = 'IP alias berhasil disimpan. Jalankan Maintenance → Reload untuk mengaktifkan perubahan.';
     }
 }
 
@@ -224,51 +225,30 @@ $ip6addr = trim($ip6net[0]);
 $ip6prefix = trim($ip6net[1]);
 $ip6gateway = trim($ip6net[2]);
 
-$file = file("ipalias.data");
-$file6 = file("ipalias6.data");
+$file = is_file('ipalias.data') ? file('ipalias.data') : array();
+$file6 = is_file('ipalias6.data') ? file('ipalias6.data') : array();
 $useip6 = file_get_contents('setip6');
-echo '<!DOCTYPE html>
-<html lang="id">
-<head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" type="text/css" href="style.css" />
-<title>DNS TRUST-NG - IP CONFIG</title>
-<script src="kunci.js"></script>
-</head>
-<body class="with-sidebar sidebar-collapsed">
-<div id="sidebar-overlay"></div>
-<div class="page-shell">';
-include_once 'menu.php';
-trustng_render_sidebar('setip.php');
+tng_ui_page_start('setip.php', 'IP Address', 'Konfigurasi IPv4/IPv6 dan loopback IP alias resolver.');
+if (!empty($notice)) tng_ui_notice('success', 'Perubahan tersimpan', $notice);
+if (!empty($error)) tng_ui_notice('critical', 'Data tidak valid', $error);
 
-echo '<div class="page-content">';
-echo '<div class="tng-topbar"><button class="tng-topbar-toggle" title="Toggle menu" aria-label="Toggle menu"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="2" y="4.5" width="16" height="2" rx="1" fill="currentColor"/><rect x="2" y="9" width="16" height="2" rx="1" fill="currentColor"/><rect x="2" y="13.5" width="16" height="2" rx="1" fill="currentColor"/></svg></button><span class="tng-topbar-title">IP Address</span><div class="tng-topbar-spacer"></div><a class="tng-topbar-back" href="/">&#8592; Dashboard</a></div>';
-//include 'submit.js';
-echo'
-<div align=center>
-<canvas class="logo-canvas" width="600" height="60"></canvas>
-<h3>Konfigurasi <span class="grad">IP Address</span></h3>
-
-<form name="isian" action="setip.php" method="post">
+tng_ui_card_start('Konfigurasi IP Address', 'Atur alamat IP statis atau DHCP untuk antarmuka eth0.');
+echo '<form name="isian" action="setip.php" method="post">
 <div class="set-section">
   <div class="set-section-head"><span class="set-section-title">IPv4</span></div>
   <div class="set-row">
     <div class="set-row-info">
-      <span class="set-row-name">Mode DHCP</span>
+      <span class="set-row-name" id="dhcp-label">Mode DHCP</span>
       <span class="set-row-desc">Alamat IP otomatis dari server DHCP.</span>
     </div>
     <div class="set-row-control">
-      <label class="tng-switch"><input type="checkbox" name="dhcp" value="yes" '.$dhcp.'><span class="tng-switch-track"></span></label>
+      <label class="tng-switch"><input type="checkbox" name="dhcp" value="yes" aria-labelledby="dhcp-label" '.$dhcp.'><span class="tng-switch-track"></span></label>
     </div>
   </div>
-  <div class="set-grid">
-    <div class="tng-field"><label>IP Address</label><input type="text" name="ipaddr" class="form__w" onKeyup="checkform()" value="'.htmlspecialchars($ipaddr).'" placeholder="192.168.168.168" required /></div>
-    <div class="tng-field"><label>Netmask</label><input type="text" name="netmask" class="form__w" onKeyup="checkform()" value="'.htmlspecialchars($netmask).'" placeholder="255.255.255.0" required /></div>
-    <div class="tng-field"><label>Gateway</label><input type="text" name="gateway" class="form__w" onKeyup="checkform()" value="'.htmlspecialchars($gateway).'" placeholder="192.168.168.1" required /></div>
+  <div class="set-grid field-grid three">
+    <div class="tng-field field"><label for="ipv4-address">IP Address</label><input id="ipv4-address" type="text" name="ipaddr" class="form__w" value="'.htmlspecialchars($ipaddr).'" placeholder="192.168.168.168" required /></div>
+    <div class="tng-field field"><label for="ipv4-netmask">Netmask</label><input id="ipv4-netmask" type="text" name="netmask" class="form__w" value="'.htmlspecialchars($netmask).'" placeholder="255.255.255.0" required /></div>
+    <div class="tng-field field"><label for="ipv4-gateway">Gateway</label><input id="ipv4-gateway" type="text" name="gateway" class="form__w" value="'.htmlspecialchars($gateway).'" placeholder="192.168.168.1" required /></div>
   </div>
 </div>';
 
@@ -277,51 +257,56 @@ if ($useip6 == 'yes') { echo '
   <div class="set-section-head"><span class="set-section-title">IPv6</span></div>
   <div class="set-row">
     <div class="set-row-info">
-      <span class="set-row-name">Auto (SLAAC / DHCP)</span>
+      <span class="set-row-name" id="ipv6-auto-label">Auto (SLAAC / DHCP)</span>
       <span class="set-row-desc">Alamat IPv6 otomatis.</span>
     </div>
     <div class="set-row-control">
-      <label class="tng-switch"><input type="checkbox" name="ip6auto" value="yes" '.$ip6auto.'><span class="tng-switch-track"></span></label>
+      <label class="tng-switch"><input type="checkbox" name="ip6auto" value="yes" aria-labelledby="ipv6-auto-label" '.$ip6auto.'><span class="tng-switch-track"></span></label>
     </div>
   </div>
-  <div class="set-grid">
-    <div class="tng-field"><label>IPv6 Address</label><input type="text" name="ip6addr" class="form__w" onKeyup="checkform()" value="'.htmlspecialchars($ip6addr).'" placeholder="::1" /></div>
-    <div class="tng-field"><label>Prefix Length</label><input type="text" name="ip6prefix" class="form__w" onKeyup="checkform()" value="'.htmlspecialchars($ip6prefix).'" placeholder="64" /></div>
-    <div class="tng-field"><label>Gateway</label><input type="text" name="ip6gateway" class="form__w" onKeyup="checkform()" value="'.htmlspecialchars($ip6gateway).'" placeholder="::2" /></div>
+  <div class="set-grid field-grid three">
+    <div class="tng-field field"><label for="ipv6-address">IPv6 Address</label><input id="ipv6-address" type="text" name="ip6addr" class="form__w" value="'.htmlspecialchars($ip6addr).'" placeholder="::1" /></div>
+    <div class="tng-field field"><label for="ipv6-prefix">Prefix Length</label><input id="ipv6-prefix" type="text" name="ip6prefix" class="form__w" value="'.htmlspecialchars($ip6prefix).'" placeholder="64" /></div>
+    <div class="tng-field field"><label for="ipv6-gateway">Gateway</label><input id="ipv6-gateway" type="text" name="ip6gateway" class="form__w" value="'.htmlspecialchars($ip6gateway).'" placeholder="::2" /></div>
   </div>
 </div>';
 }
 
-echo'
-<div class="di-actions">
-  <input type="submit" id="submit" value="Simpan" class="submit-button"/>
-  <input type="button" onclick="'.$back.'" class="submit-button" value="Kembali">
+echo '
+<div class="form-actions di-actions">
+  <input type="submit" id="submit-ip-address" value="Simpan" class="submit-button"/>
+  <input type="button" onclick="'.$back.'" class="submit-button button-secondary" value="Kembali">
 </div>
-</form>
+</form>';
+tng_ui_card_end();
 
-<form name="ipalias" action="setip.php" method="post">
-<div class="set-section">
-  <div class="set-section-head"><span class="set-section-title">Loopback IP Alias</span></div>
-  <p class="set-section-desc">Tambahkan IP alias (format ip/cidr) agar TrustNG dapat melayani di IP tersebut tanpa perlu Tproxy.</p>
-  <div class="tng-field"><label>IPv4</label><div class="areatxt2"><textarea rows="8" cols="20" name="data"'; echo "placeholder='contoh:\n8.8.8.8/32\n1.1.1.1/32\n9.9.9.9/32\n192.168.1.11/32'"; echo 'onkeyup="checkIPList(this);">';
-foreach($file as $text) { echo $text; }
+tng_ui_card_start('Loopback IP Alias', 'Tambahkan IP alias (format ip/cidr) agar TrustNG dapat melayani di IP tersebut tanpa perlu Tproxy.');
+echo '<form name="ipalias" action="setip.php" method="post">
+<div class="tng-field field"><label>IPv4</label><div class="areatxt2"><textarea rows="8" cols="20" name="data" onkeyup="checkIPList(this);" placeholder="contoh:
+8.8.8.8/32
+1.1.1.1/32
+9.9.9.9/32
+192.168.1.11/32">';
+foreach($file as $text) { echo htmlspecialchars($text, ENT_QUOTES, 'UTF-8'); }
 echo '</textarea></div></div>';
 if ($useip6 == 'yes') { echo '
-<div class="tng-field"><label>IPv6</label><div class="areatxt2"><textarea rows="8" cols="20" name="data6"'; echo "placeholder='contoh:\n::1/128\n::2/128\n::3/128\n::4/128'"; echo '>';
-foreach($file6 as $text) { echo $text; }
+<div class="tng-field field"><label>IPv6</label><div class="areatxt2"><textarea rows="8" cols="20" name="data6" placeholder="contoh:
+::1/128
+::2/128
+::3/128
+::4/128">';
+foreach($file6 as $text) { echo htmlspecialchars($text, ENT_QUOTES, 'UTF-8'); }
 echo '</textarea></div></div>';
 }
-echo'
+echo '
 <input type="hidden" name="ipalias" value="submit">
-<div class="di-actions">
-  <input type="submit" id="submit" value="Simpan" class="submit-button"/>
-  <a class="submit-button" href="/">Kembali</a>
+<div class="form-actions di-actions">
+  <input type="submit" id="submit-ip-alias" value="Simpan" class="submit-button"/>
+  <a class="submit-button button-secondary" href="/">Kembali</a>
 </div>
-</form>
+</form>';
+tng_ui_card_end();
 
-<p><small><b>&#169; 2024 Kominfo</b></small>
-</div>';
-
-
-echo '</div></div>';
+echo '<script src="kunci.js"></script>';
+tng_ui_page_end('setip.php');
 ?>
