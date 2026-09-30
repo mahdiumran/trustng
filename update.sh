@@ -42,22 +42,6 @@ push_artifact() { # push_artifact <src> <dst> [mode]
 echo "== TRUST-NG update (mode: $MODE) =="
 [ -n "$REMOTE" ] && echo "Target: root@$REMOTE"
 
-run_remote "mkdir -p $BACKUP /usr/local/sbin /usr/local/libexec /etc/unbound/db /etc/systemd/system/unbound.service.d /usr/local/etc/unbound"
-run_remote "ln -sf /etc/unbound/unbound.conf /usr/local/etc/unbound/unbound.conf 2>/dev/null || true"
-# Permission fix early (stats 0 on new deploy) — idempotent, also for binary-only mode
-run_remote '
-mkdir -p /etc/tmpfiles.d
-echo "d /etc/unbound/run 0755 unbound unbound -" > /etc/tmpfiles.d/trustng-unbound.conf
-systemd-tmpfiles --create 2>/dev/null || true
-chown unbound:unbound /etc/unbound/run /etc/unbound/db 2>/dev/null || true
-chmod 0755 /etc/unbound/run 2>/dev/null || true
-adduser www-data unbound 2>/dev/null || true
-mkdir -p /var/lib/trustng-auth /var/lib/trustng-metrics
-chown -R www-data:www-data /var/lib/trustng-auth 2>/dev/null || true
-chown -R www-data:www-data /var/lib/trustng-metrics 2>/dev/null || true
-chmod 0750 /var/lib/trustng-auth 2>/dev/null || true
-'
-
 do_binary=0; do_config=0; do_scripts=0; do_blocklist=0; do_web=0; do_web_changed=0
 case "$MODE" in
     all)         do_binary=1; do_config=1; do_scripts=1; do_web=1 ;;
@@ -70,12 +54,59 @@ case "$MODE" in
     *) echo "mode tidak dikenal: $MODE (pakai all|binary|config|scripts|web|web-changed|blocklist)" >&2; exit 64 ;;
 esac
 
+if [ "$do_config" = 1 ]; then
+    CHECKCONF="$DEPLOY_DIR/bin/unbound-checkconf"
+    [ -x "$CHECKCONF" ] || CHECKCONF=$(command -v unbound-checkconf || true)
+    if [ -z "$CHECKCONF" ]; then
+        echo "PREFLIGHT GAGAL: unbound-checkconf tidak tersedia di sumber" >&2
+        exit 1
+    fi
+    if ! "$CHECKCONF" "$DEPLOY_DIR/conf/unbound.conf"; then
+        echo "PREFLIGHT GAGAL: conf/unbound.conf tidak valid — tidak ada yang dikirim" >&2
+        exit 1
+    fi
+    echo "[OK] preflight: conf/unbound.conf valid"
+fi
+
+ANCHOR_FILE=$(sed -n 's/^[[:space:]]*auto-trust-anchor-file:[[:space:]]*"\(.*\)".*/\1/p' "$DEPLOY_DIR/conf/unbound.conf" | tail -n 1)
+ANCHOR_FILE=${ANCHOR_FILE:-/var/lib/unbound/root.key}
+
+run_remote "mkdir -p $BACKUP /usr/local/sbin /usr/local/libexec /etc/unbound/db /etc/systemd/system/unbound.service.d /usr/local/etc/unbound"
+run_remote "ln -sf /etc/unbound/unbound.conf /usr/local/etc/unbound/unbound.conf 2>/dev/null || true"
+# Permission fix early (stats 0 on new deploy) — idempotent, also for binary-only mode
+run_remote '
+mkdir -p /etc/tmpfiles.d
+echo "d /etc/unbound/run 0755 unbound unbound -" > /etc/tmpfiles.d/trustng-unbound.conf
+systemd-tmpfiles --create 2>/dev/null || true
+chown unbound:unbound /etc/unbound/run /etc/unbound/db 2>/dev/null || true
+chmod 0755 /etc/unbound/run 2>/dev/null || true
+adduser www-data unbound 2>/dev/null || true
+mkdir -p /var/lib/trustng-auth/sessions /var/lib/trustng-metrics
+chown -R www-data:www-data /var/lib/trustng-auth 2>/dev/null || true
+chown -R www-data:www-data /var/lib/trustng-metrics 2>/dev/null || true
+chmod 0750 /var/lib/trustng-auth /var/lib/trustng-auth/sessions 2>/dev/null || true
+'
+
 if [ "$MODE" = "blocklist" ]; then
     run_remote "/usr/local/sbin/update-blocklist"
     exit $?
 fi
 
 if [ "$do_config" = 1 ]; then
+    # Ensure the trust anchor exists and is a real autotrust file (valid
+    # anchors are ~1.2 KB; a truncated DS stub is ~83 bytes).
+    run_remote "
+    install -d -o unbound -g unbound -m 0755 /var/lib/unbound /etc/unbound/key
+    anchor_bad() { [ ! -s \"\$1\" ] || [ \"\$(wc -c < \"\$1\" 2>/dev/null || echo 0)\" -lt 500 ] || ! grep -q 20326 \"\$1\" 2>/dev/null; }
+    if anchor_bad '$ANCHOR_FILE'; then
+        /usr/local/sbin/unbound-anchor -a '$ANCHOR_FILE' 2>/dev/null || unbound-anchor -a '$ANCHOR_FILE' 2>/dev/null || true
+        anchor_bad '$ANCHOR_FILE' && cp -f /usr/share/dns/root.key '$ANCHOR_FILE' 2>/dev/null || true
+        anchor_bad '$ANCHOR_FILE' && printf '. IN DS 20326 8 2 683D2D0ACB5C2EED8C6783AFA516D0BE8A937AC3504823D56FA7010615E84B1C\n' > '$ANCHOR_FILE'
+        chown unbound:unbound '$ANCHOR_FILE' 2>/dev/null || true; chmod 0644 '$ANCHOR_FILE' 2>/dev/null || true
+        echo \"[FIX] \$ANCHOR_FILE dibuat/diperbaiki\"
+    fi
+    test -s '$ANCHOR_FILE' || { echo \"ERROR: trust anchor \$ANCHOR_FILE tidak bisa dibuat — config tidak akan divalidasi\" >&2; exit 1; }
+    "
     push_artifact "$DEPLOY_DIR/conf/unbound.conf" /tmp/unbound.conf.preflight 0644
     if [ "$do_binary" = 1 ]; then
         push_artifact "$DEPLOY_DIR/bin/unbound-checkconf" /tmp/unbound-checkconf.preflight

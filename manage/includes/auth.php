@@ -23,6 +23,13 @@ function tng_db() {
 
 function tng_session_start() {
     if (session_status() === PHP_SESSION_ACTIVE) return;
+    $session_path = '/var/lib/trustng-auth/sessions';
+    if (is_dir($session_path) && is_writable($session_path)) {
+        session_save_path($session_path);
+    }
+    ini_set('session.use_strict_mode', '1');
+    ini_set('session.use_only_cookies', '1');
+    ini_set('session.use_trans_sid', '0');
     session_name('trustng_session');
     session_set_cookie_params(array(
         'lifetime' => 0,

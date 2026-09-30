@@ -319,9 +319,8 @@ for name in forwarder.data resolver.data hosts.data hosts6.data ipaddr.data ip6a
     chmod 0664 "$WEBROOT/$name"
 done
 
-# Auth database
-install -d -m 0750 /var/lib/trustng-auth
-chown www-data:www-data /var/lib/trustng-auth
+install -d -o www-data -g www-data -m 0750 /var/lib/trustng-auth /var/lib/trustng-auth/sessions
+chown -R www-data:www-data /var/lib/trustng-auth
 
 # ---- 7. Generate whitelist from panel (must run from WEBROOT so whitelist.db is found)
 if [ -x "$WEBROOT/setwhitelist.sh" ] && [ -s "$WEBROOT/whitelist.db" ]; then
