@@ -140,6 +140,24 @@ function tng_verify_apr1($plain, $hash) {
     return hash_equals($hash, $computed);
 }
 
+function tng_verify_password($plain, $hash) {
+    if (!is_string($plain) || !is_string($hash) || $hash === '') return false;
+    if (password_verify($plain, $hash)) return true;
+    if (strpos($hash, '$apr1$') === 0 && tng_verify_apr1($plain, $hash)) return true;
+    // crypt() menangani format legacy lain: $1$ (md5crypt), $5$/$6$ (sha),
+    // $2y$ (bcrypt), dan DES.
+    if (strlen($hash) > 4 && $hash[0] === '$') {
+        $crypt = @crypt($plain, $hash);
+        if (is_string($crypt) && $crypt !== '' && hash_equals($hash, $crypt)) return true;
+    }
+    // Apache {SHA} = base64(sha1(password))
+    if (stripos($hash, '{SHA}') === 0) {
+        $sha = base64_encode(sha1($plain, true));
+        if (hash_equals(substr($hash, 5), $sha)) return true;
+    }
+    return false;
+}
+
 function tng_verify_legacy_htpasswd($username, $password) {
     $file = __DIR__ . '/../.htpasswd';
     if (!is_file($file) || !is_readable($file)) return false;
@@ -151,7 +169,7 @@ function tng_verify_legacy_htpasswd($username, $password) {
         $u = trim(substr($line, 0, $pos));
         $h = trim(substr($line, $pos + 1));
         if ($u !== $username) continue;
-        if (password_verify($password, $h) || tng_verify_apr1($password, $h)) {
+        if (tng_verify_password($password, $h)) {
             return true;
         }
     }
@@ -160,15 +178,11 @@ function tng_verify_legacy_htpasswd($username, $password) {
 
 function tng_authenticate_user($username, $password) {
     $u = tng_get_user($username);
-    if ($u && !empty($u['password_hash']) && password_verify($password, $u['password_hash'])) {
+    if ($u && !empty($u['password_hash']) && tng_verify_password($password, $u['password_hash'])) {
         return $u;
     }
-    if ($u && !empty($u['password_hash']) && tng_verify_apr1($password, $u['password_hash'])) {
-        tng_set_password($username, $password);
-        return tng_get_user($username);
-    }
-    if (tng_verify_legacy_htpasswd($username, $password)) {
-        tng_set_password($username, $password);
+    if (!$u && tng_verify_legacy_htpasswd($username, $password)) {
+        if (!tng_set_password($username, $password)) return false;
         return tng_get_user($username);
     }
     return false;
