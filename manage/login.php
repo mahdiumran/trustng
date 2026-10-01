@@ -23,11 +23,8 @@ $password2 = isset($_POST['password2']) ? strval($_POST['password2']) : '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $csrf_sent = isset($_POST['csrf']) ? strval($_POST['csrf']) : '';
-    if (!tng_csrf_check($csrf_sent)) {
-        unset($_SESSION['tng_csrf']);
-        session_regenerate_id(true);
-        header('Location: /login.php?session=expired');
-        exit(0);
+    if (!tng_login_csrf_check($csrf_sent)) {
+        $error = 'Sesi login diperbarui. Silakan masukkan password kembali.';
     } elseif ($setup_mode && file_exists(TNG_SETUP_FLAG)) {
         if (strlen($password) < 6) {
             $error = 'Password minimal 6 karakter.';
@@ -48,8 +45,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (tng_is_locked_out($ip)) {
             $error = 'Terlalu banyak percobaan gagal. Coba lagi dalam 15 menit.';
         } else {
-            $u = tng_get_user($username);
-            if ($u && password_verify($password, $u['password_hash'])) {
+            $u = tng_authenticate_user($username, $password);
+            if ($u) {
                 tng_record_attempt($ip, true);
                 session_regenerate_id(true);
                 $_SESSION['tng_user'] = $u['username'];
@@ -99,7 +96,7 @@ tng_ui_head($setup_mode ? 'Setup Administrator' : 'Login');
       <div class="login-error" role="alert"><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i> <?php echo tng_e($error); ?></div>
       <?php endif; ?>
       <form class="login-form" method="post" action="<?php echo tng_e($form_action); ?>" data-busy-label="<?php echo $setup_mode ? 'Menyimpan…' : 'Memverifikasi…'; ?>">
-        <input type="hidden" name="csrf" value="<?php echo tng_e(tng_csrf_token()); ?>"/>
+        <input type="hidden" name="csrf" value="<?php echo tng_e(tng_login_csrf_token()); ?>"/>
         <?php if (!$setup_mode): ?>
         <div class="login-field field">
           <label for="username">Username</label>
